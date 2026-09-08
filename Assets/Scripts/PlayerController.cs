@@ -1,36 +1,35 @@
 ﻿using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
-/// <summary>
-/// FPS-контроллер игрока.
-/// </summary>
 [RequireComponent(typeof(Rigidbody))]
 public class PlayerController : MonoBehaviour
 {
-    [Header("маленькие негритянские дети")]
+    [Header("Ссылки")]
     [SerializeField] private Transform cameraTransform;
     [SerializeField] private Camera playerCamera;
     [SerializeField] private Transform groundCheck;
 
-    [Header("шаги гиги")]
+    [Header("Движение")]
     [SerializeField] private float walkSpeed = 5f;
     [SerializeField] private float sprintSpeed = 9f;
     [SerializeField] private float acceleration = 12f;
     [SerializeField] private float airControlMultiplier = 0.4f;
 
-    [Header("Прыг")]
+    [Header("Прыжок")]
     [SerializeField] private bool canJump = true;
     [SerializeField] private float jumpForce = 6f;
     [SerializeField] private float extraGravity = 12f;
     [SerializeField] private float groundCheckRadius = 0.25f;
     [SerializeField] private LayerMask groundMask = ~0;
 
-    [Header("мыш")]
+    [Header("Обзор мышью")]
     [SerializeField] private float mouseSensitivity = 2.5f;
     [SerializeField] private float minPitch = -85f;
     [SerializeField] private float maxPitch = 85f;
     [SerializeField] private bool lockCursor = true;
 
-    [Header("Спринт")]
+    [Header("Спринт / Стамина")]
     [SerializeField] private KeyCode sprintKey = KeyCode.LeftShift;
     [SerializeField] private float maxStamina = 100f;
     [SerializeField] private float staminaDrainRate = 22f;
@@ -38,12 +37,12 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float staminaRegenDelay = 1f;
     [SerializeField] private float minStaminaToSprintAgain = 15f;
 
-    [Header("фов")]
+    [Header("FOV при беге")]
     [SerializeField] private float normalFOV = 60f;
     [SerializeField] private float sprintFOV = 70f;
     [SerializeField] private float fovChangeSpeed = 8f;
 
-    [Header("пг")]
+    [Header("Head Bobbing")]
     [SerializeField] private bool enableHeadBob = true;
     [SerializeField] private float walkBobSpeed = 8f;
     [SerializeField] private float walkBobAmount = 0.045f;
@@ -51,14 +50,13 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float sprintBobAmount = 0.09f;
     [SerializeField] private float bobSmoothing = 9f;
 
-    [Header("Прицеу")]
+    [Header("Прицел (точка в центре экрана)")]
     [SerializeField] private bool showCrosshair = true;
     [SerializeField] private float crosshairSize = 5f;
     [SerializeField] private Color crosshairColor = Color.white;
 
-    [Header("стамина ебуча")]
+    [Header("Полоса стамины")]
     [SerializeField] private bool showStaminaBar = true;
-    [Tooltip("Отображать шкалу только когда игрок бежит или стамина восстанавливается")]
     [SerializeField] private bool showOnlyWhenSprinting = true;
     [SerializeField] private string staminaLabelText = "STAMINA";
     [SerializeField] private int staminaLabelFontSize = 14;
@@ -69,8 +67,19 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float indicatorLineWidth = 3f;
     [SerializeField] private Color staminaUiColor = Color.white;
 
+    [Header("UI / Escape Menu")]
+    [SerializeField] private GameObject pauseMenuPanel;
+    [SerializeField] private GameObject settingsPanel;
+    [SerializeField] private Button resumeButton;
+    [SerializeField] private Button settingsButton;
+    [SerializeField] private Button mainMenuButton;
+    [SerializeField] private Button closeSettingsButton;
+    [SerializeField] private Slider gammaSlider;
+    [SerializeField] private Slider fpsSlider;
+
     private Rigidbody rb;
     private float pitch;
+    private float yaw;
     private bool grounded;
     private bool jumpRequested;
 
@@ -84,6 +93,9 @@ public class PlayerController : MonoBehaviour
 
     private Texture2D whiteTex;
     private Texture2D dotTex;
+    private bool isPaused;
+
+    private float deltaTime;
 
     public float StaminaNormalized => maxStamina > 0f ? currentStamina / maxStamina : 0f;
 
@@ -96,7 +108,9 @@ public class PlayerController : MonoBehaviour
 
     private void Start()
     {
+        Time.timeScale = 1f;
         currentStamina = maxStamina;
+        yaw = transform.eulerAngles.y;
 
         if (cameraTransform != null)
             cameraInitialLocalPos = cameraTransform.localPosition;
@@ -104,34 +118,64 @@ public class PlayerController : MonoBehaviour
         if (playerCamera != null)
             playerCamera.fieldOfView = normalFOV;
 
-        if (lockCursor)
-        {
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
-        }
+        SetCursorState(true);
 
         whiteTex = new Texture2D(1, 1);
         whiteTex.SetPixel(0, 0, Color.white);
         whiteTex.Apply();
 
         dotTex = CreateDotTexture(16);
+
+        SetupUI();
+    }
+
+    private void SetupUI()
+    {
+        if (pauseMenuPanel != null) pauseMenuPanel.SetActive(false);
+        if (settingsPanel != null) settingsPanel.SetActive(false);
+
+        if (resumeButton != null) resumeButton.onClick.AddListener(ResumeGame);
+        if (settingsButton != null) settingsButton.onClick.AddListener(OpenSettings);
+        if (mainMenuButton != null) mainMenuButton.onClick.AddListener(LoadMainMenu);
+        if (closeSettingsButton != null) closeSettingsButton.onClick.AddListener(CloseSettings);
+
+        if (fpsSlider != null)
+        {
+            fpsSlider.minValue = 0f;
+            fpsSlider.maxValue = 144f;
+            fpsSlider.wholeNumbers = true;
+            fpsSlider.value = 60f;
+            fpsSlider.onValueChanged.AddListener(OnFPSChanged);
+            OnFPSChanged(fpsSlider.value);
+        }
+
+        if (gammaSlider != null)
+        {
+            gammaSlider.minValue = 0f;
+            gammaSlider.maxValue = 2f;
+            gammaSlider.value = 1f;
+            gammaSlider.onValueChanged.AddListener(OnGammaChanged);
+            OnGammaChanged(gammaSlider.value);
+        }
     }
 
     private void Update()
     {
-        if (lockCursor)
+        deltaTime += (Time.unscaledDeltaTime - deltaTime) * 0.1f;
+
+        if (Input.GetKeyDown(KeyCode.Escape))
         {
-            if (Input.GetKeyDown(KeyCode.Escape))
+            if (settingsPanel != null && settingsPanel.activeSelf)
             {
-                Cursor.lockState = CursorLockMode.None;
-                Cursor.visible = true;
+                CloseSettings();
             }
-            else if (Input.GetMouseButtonDown(0) && Cursor.lockState != CursorLockMode.Locked)
+            else
             {
-                Cursor.lockState = CursorLockMode.Locked;
-                Cursor.visible = false;
+                TogglePause();
             }
         }
+
+        if (isPaused) return;
 
         HandleMouseLook();
         HandleSprintState();
@@ -145,6 +189,8 @@ public class PlayerController : MonoBehaviour
 
     private void FixedUpdate()
     {
+        if (isPaused) return;
+
         grounded = CheckGrounded();
         Move();
 
@@ -155,6 +201,70 @@ public class PlayerController : MonoBehaviour
         jumpRequested = false;
 
         rb.AddForce(Vector3.up * -extraGravity, ForceMode.Acceleration);
+    }
+
+    public void TogglePause()
+    {
+        isPaused = !isPaused;
+
+        if (isPaused)
+        {
+            Time.timeScale = 0f;
+            if (pauseMenuPanel != null) pauseMenuPanel.SetActive(true);
+            if (settingsPanel != null) settingsPanel.SetActive(false);
+            SetCursorState(false);
+        }
+        else
+        {
+            ResumeGame();
+        }
+    }
+
+    public void ResumeGame()
+    {
+        isPaused = false;
+        Time.timeScale = 1f;
+        if (pauseMenuPanel != null) pauseMenuPanel.SetActive(false);
+        if (settingsPanel != null) settingsPanel.SetActive(false);
+        SetCursorState(true);
+    }
+
+    public void OpenSettings()
+    {
+        if (settingsPanel != null) settingsPanel.SetActive(true);
+    }
+
+    public void CloseSettings()
+    {
+        if (settingsPanel != null) settingsPanel.SetActive(false);
+    }
+
+    public void LoadMainMenu()
+    {
+        Time.timeScale = 1f;
+        SceneManager.LoadScene(1);
+    }
+
+    private void OnFPSChanged(float value)
+    {
+        QualitySettings.vSyncCount = 0;
+        int fps = Mathf.RoundToInt(value);
+        Application.targetFrameRate = (fps <= 0) ? -1 : fps;
+    }
+
+    private void OnGammaChanged(float value)
+    {
+        RenderSettings.ambientIntensity = value;
+        RenderSettings.reflectionIntensity = value;
+    }
+
+    private void SetCursorState(bool isLocked)
+    {
+        if (lockCursor)
+        {
+            Cursor.lockState = isLocked ? CursorLockMode.Locked : CursorLockMode.None;
+            Cursor.visible = !isLocked;
+        }
     }
 
     private bool CheckGrounded()
@@ -188,10 +298,11 @@ public class PlayerController : MonoBehaviour
         float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
         float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity;
 
-        transform.Rotate(Vector3.up * mouseX);
-
+        yaw += mouseX;
         pitch -= mouseY;
         pitch = Mathf.Clamp(pitch, minPitch, maxPitch);
+
+        transform.localRotation = Quaternion.Euler(0f, yaw, 0f);
 
         if (cameraTransform != null)
             cameraTransform.localRotation = Quaternion.Euler(pitch, 0f, 0f);
@@ -290,8 +401,23 @@ public class PlayerController : MonoBehaviour
 
     private void OnGUI()
     {
+        if (isPaused) return;
+
         DrawCrosshair();
         DrawStaminaBar();
+        DrawFPSCounter();
+    }
+
+    private void DrawFPSCounter()
+    {
+        float currentFPS = 1f / deltaTime;
+        GUIStyle fpsStyle = new GUIStyle();
+        fpsStyle.fontSize = 16;
+        fpsStyle.fontStyle = FontStyle.Bold;
+        fpsStyle.normal.textColor = new Color(0.6f, 0.6f, 0.6f, 0.6f);
+        fpsStyle.alignment = TextAnchor.UpperRight;
+
+        GUI.Label(new Rect(Screen.width - 110, 10, 100, 30), $"FPS: {Mathf.RoundToInt(currentFPS)}", fpsStyle);
     }
 
     private void DrawCrosshair()
@@ -312,8 +438,6 @@ public class PlayerController : MonoBehaviour
     private void DrawStaminaBar()
     {
         if (!showStaminaBar) return;
-
-       
         if (showOnlyWhenSprinting && !isSprinting && currentStamina >= maxStamina) return;
 
         float barWidth = staminaBarSize.x;
@@ -336,14 +460,11 @@ public class PlayerController : MonoBehaviour
         float labelX = startX;
         float barX = labelX + labelSize.x + labelSpacing;
 
-       
         Rect labelRect = new Rect(labelX, y + (barHeight - labelSize.y) / 2f, labelSize.x, labelSize.y);
         GUI.Label(labelRect, staminaLabelText, labelStyle);
 
-      
         DrawOutline(new Rect(barX, y, barWidth, barHeight), staminaUiColor, borderWidth);
 
-        
         float normalizedOffset = 1f - StaminaNormalized;
         float innerWidth = barWidth - (borderWidth * 2f) - indicatorLineWidth;
         float lineX = barX + borderWidth + (normalizedOffset * innerWidth);
@@ -353,10 +474,10 @@ public class PlayerController : MonoBehaviour
 
     private void DrawOutline(Rect rect, Color color, float width)
     {
-        DrawRect(new Rect(rect.x, rect.y, rect.width, width), color); // Верх
-        DrawRect(new Rect(rect.x, rect.y + rect.height - width, rect.width, width), color); // Низ
-        DrawRect(new Rect(rect.x, rect.y, width, rect.height), color); // Лево
-        DrawRect(new Rect(rect.x + rect.width - width, rect.y, width, rect.height), color); // Право
+        DrawRect(new Rect(rect.x, rect.y, rect.width, width), color);
+        DrawRect(new Rect(rect.x, rect.y + rect.height - width, rect.width, width), color);
+        DrawRect(new Rect(rect.x, rect.y, width, rect.height), color);
+        DrawRect(new Rect(rect.x + rect.width - width, rect.y, width, rect.height), color);
     }
 
     private void DrawRect(Rect rect, Color color)
