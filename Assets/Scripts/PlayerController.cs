@@ -1,6 +1,16 @@
 ﻿using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+using TMPro;
+
+[System.Serializable]
+public struct ItemData
+{
+    public string itemName;
+    public string itemTag;
+    public Sprite itemSprite;
+    [TextArea] public string description;
+}
 
 [RequireComponent(typeof(Rigidbody))]
 public class PlayerController : MonoBehaviour
@@ -76,6 +86,19 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private Button closeSettingsButton;
     [SerializeField] private Slider gammaSlider;
     [SerializeField] private Slider fpsSlider;
+    [SerializeField] private Slider soundSlider;
+    [SerializeField] private Slider sensitivitySlider;
+
+    [Header("Инвентарь (TMP)")]
+    [SerializeField] private GameObject inventoryPanel;
+    [SerializeField] private TextMeshProUGUI descriptionText;
+    [SerializeField] private Image[] slotImages;
+    [SerializeField] private ItemData[] itemDatabase;
+    [SerializeField] private float interactDistance = 3f;
+
+    [Header("Тест Инвентаря")]
+    [SerializeField] private bool giveTestItem;
+    [SerializeField] private string testItemTag;
 
     private Rigidbody rb;
     private float pitch;
@@ -94,8 +117,14 @@ public class PlayerController : MonoBehaviour
     private Texture2D whiteTex;
     private Texture2D dotTex;
     private bool isPaused;
+    private bool isInventoryOpen;
 
     private float deltaTime;
+
+    private int[] inventorySlots;
+    private string lookAtItemName = "";
+    private GameObject lookAtObject = null;
+    private int lookAtItemDbIndex = -1;
 
     public float StaminaNormalized => maxStamina > 0f ? currentStamina / maxStamina : 0f;
 
@@ -126,6 +155,17 @@ public class PlayerController : MonoBehaviour
 
         dotTex = CreateDotTexture(16);
 
+        inventorySlots = new int[slotImages.Length];
+        for (int i = 0; i < inventorySlots.Length; i++)
+        {
+            inventorySlots[i] = -1;
+            if (slotImages[i] != null)
+            {
+                slotImages[i].sprite = null;
+                slotImages[i].color = Color.black;
+            }
+        }
+
         SetupUI();
     }
 
@@ -133,6 +173,9 @@ public class PlayerController : MonoBehaviour
     {
         if (pauseMenuPanel != null) pauseMenuPanel.SetActive(false);
         if (settingsPanel != null) settingsPanel.SetActive(false);
+        if (inventoryPanel != null) inventoryPanel.SetActive(false);
+
+        if (descriptionText != null) descriptionText.text = "";
 
         if (resumeButton != null) resumeButton.onClick.AddListener(ResumeGame);
         if (settingsButton != null) settingsButton.onClick.AddListener(OpenSettings);
@@ -157,15 +200,44 @@ public class PlayerController : MonoBehaviour
             gammaSlider.onValueChanged.AddListener(OnGammaChanged);
             OnGammaChanged(gammaSlider.value);
         }
+
+        if (soundSlider != null)
+        {
+            soundSlider.minValue = 0f;
+            soundSlider.maxValue = 1f;
+            soundSlider.value = AudioListener.volume;
+            soundSlider.onValueChanged.AddListener(OnSoundChanged);
+            OnSoundChanged(soundSlider.value);
+        }
+
+        if (sensitivitySlider != null)
+        {
+            sensitivitySlider.minValue = 0.1f;
+            sensitivitySlider.maxValue = 10f;
+            sensitivitySlider.value = mouseSensitivity;
+            sensitivitySlider.onValueChanged.AddListener(OnSensitivityChanged);
+            OnSensitivityChanged(sensitivitySlider.value);
+        }
     }
 
     private void Update()
     {
         deltaTime += (Time.unscaledDeltaTime - deltaTime) * 0.1f;
 
+        if (giveTestItem)
+        {
+            giveTestItem = false;
+            int dbIndex = GetItemDbIndexByTag(testItemTag);
+            if (dbIndex != -1) AddItemToInventory(dbIndex);
+        }
+
         if (Input.GetKeyDown(KeyCode.Escape))
         {
-            if (settingsPanel != null && settingsPanel.activeSelf)
+            if (isInventoryOpen)
+            {
+                ToggleInventory();
+            }
+            else if (settingsPanel != null && settingsPanel.activeSelf)
             {
                 CloseSettings();
             }
@@ -175,13 +247,19 @@ public class PlayerController : MonoBehaviour
             }
         }
 
-        if (isPaused) return;
+        if (!isPaused && Input.GetKeyDown(KeyCode.I))
+        {
+            ToggleInventory();
+        }
+
+        if (isPaused || isInventoryOpen) return;
 
         HandleMouseLook();
         HandleSprintState();
         HandleStamina();
         HandleHeadBob();
         HandleFOV();
+        HandleInteraction();
 
         if (canJump && Input.GetButtonDown("Jump"))
             jumpRequested = true;
@@ -189,7 +267,7 @@ public class PlayerController : MonoBehaviour
 
     private void FixedUpdate()
     {
-        if (isPaused) return;
+        if (isPaused || isInventoryOpen) return;
 
         grounded = CheckGrounded();
         Move();
@@ -201,6 +279,98 @@ public class PlayerController : MonoBehaviour
         jumpRequested = false;
 
         rb.AddForce(Vector3.up * -extraGravity, ForceMode.Acceleration);
+    }
+
+    private void HandleInteraction()
+    {
+        lookAtItemName = "";
+        lookAtObject = null;
+        lookAtItemDbIndex = -1;
+
+        if (Physics.Raycast(playerCamera.transform.position, playerCamera.transform.forward, out RaycastHit hit, interactDistance))
+        {
+            string hitTag = hit.collider.tag;
+            int dbIndex = GetItemDbIndexByTag(hitTag);
+
+            if (dbIndex != -1)
+            {
+                lookAtItemName = itemDatabase[dbIndex].itemName;
+                lookAtObject = hit.collider.gameObject;
+                lookAtItemDbIndex = dbIndex;
+
+                if (Input.GetKeyDown(KeyCode.E))
+                {
+                    if (AddItemToInventory(lookAtItemDbIndex))
+                    {
+                        Destroy(lookAtObject);
+                        lookAtItemName = "";
+                    }
+                }
+            }
+        }
+    }
+
+    private int GetItemDbIndexByTag(string tagToFind)
+    {
+        for (int i = 0; i < itemDatabase.Length; i++)
+        {
+            if (itemDatabase[i].itemTag == tagToFind)
+                return i;
+        }
+        return -1;
+    }
+
+    private bool AddItemToInventory(int dbIndex)
+    {
+        for (int i = 0; i < inventorySlots.Length; i++)
+        {
+            if (inventorySlots[i] == -1)
+            {
+                inventorySlots[i] = dbIndex;
+                if (slotImages[i] != null)
+                {
+                    slotImages[i].sprite = itemDatabase[dbIndex].itemSprite;
+                    slotImages[i].color = Color.white;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void OnInventorySlotClicked(int slotIndex)
+    {
+        if (slotIndex >= 0 && slotIndex < inventorySlots.Length)
+        {
+            int dbIndex = inventorySlots[slotIndex];
+            if (dbIndex != -1 && descriptionText != null)
+            {
+                descriptionText.text = itemDatabase[dbIndex].description;
+            }
+            else if (descriptionText != null)
+            {
+                descriptionText.text = "";
+            }
+        }
+    }
+
+    public void ToggleInventory()
+    {
+        isInventoryOpen = !isInventoryOpen;
+
+        if (isInventoryOpen)
+        {
+            Time.timeScale = 0f;
+            if (inventoryPanel != null) inventoryPanel.SetActive(true);
+            if (descriptionText != null) descriptionText.text = "";
+            SetCursorState(false);
+        }
+        else
+        {
+            Time.timeScale = 1f;
+            if (inventoryPanel != null) inventoryPanel.SetActive(false);
+            SetCursorState(true);
+        }
     }
 
     public void TogglePause()
@@ -256,6 +426,16 @@ public class PlayerController : MonoBehaviour
     {
         RenderSettings.ambientIntensity = value;
         RenderSettings.reflectionIntensity = value;
+    }
+
+    private void OnSoundChanged(float value)
+    {
+        AudioListener.volume = value;
+    }
+
+    private void OnSensitivityChanged(float value)
+    {
+        mouseSensitivity = value;
     }
 
     private void SetCursorState(bool isLocked)
@@ -401,11 +581,35 @@ public class PlayerController : MonoBehaviour
 
     private void OnGUI()
     {
-        if (isPaused) return;
+        if (isPaused || isInventoryOpen) return;
 
         DrawCrosshair();
         DrawStaminaBar();
         DrawFPSCounter();
+        DrawInteractionText();
+    }
+
+    private void DrawInteractionText()
+    {
+        if (!string.IsNullOrEmpty(lookAtItemName))
+        {
+            GUIStyle interactStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 22, // Размер шрифта
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter
+            };
+            interactStyle.normal.textColor = Color.white;
+
+            string text = $"{lookAtItemName} - [E]";
+            Vector2 size = interactStyle.CalcSize(new GUIContent(text));
+
+            // Ставим по центру экрана по X и смещаем чуть ниже центра по Y
+            float x = (Screen.width - size.x) / 2f;
+            float y = (Screen.height / 2f) + (crosshairSize / 2f) + 30f;
+
+            GUI.Label(new Rect(x, y, size.x, size.y), text, interactStyle);
+        }
     }
 
     private void DrawFPSCounter()
