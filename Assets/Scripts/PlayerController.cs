@@ -89,6 +89,14 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private Slider soundSlider;
     [SerializeField] private Slider sensitivitySlider;
 
+    [Header("Осмотр и Подбор предмета")]
+    [SerializeField] private GameObject pickupPanel;
+    [SerializeField] private Button yesPickupButton;
+    [SerializeField] private Button noPickupButton;
+    [SerializeField] private Transform inspectHoldPoint;
+    [SerializeField] private float itemRotationSpeed = 4f;
+    [SerializeField] private float inspectFlySpeed = 20f;
+
     [Header("Инвентарь (TMP)")]
     [SerializeField] private GameObject inventoryPanel;
     [SerializeField] private TextMeshProUGUI descriptionText;
@@ -118,6 +126,16 @@ public class PlayerController : MonoBehaviour
     private Texture2D dotTex;
     private bool isPaused;
     private bool isInventoryOpen;
+
+    // Данные осмотра
+    private bool isInspecting;
+    private GameObject currentInspectObject;
+    private int currentInspectDbIndex = -1;
+    private Vector3 inspectOriginalPos;
+    private Quaternion inspectOriginalRot;
+    private Transform inspectOriginalParent;
+    private bool inspectOriginalKinematic;
+    private Collider[] inspectDisabledColliders;
 
     private float deltaTime;
 
@@ -174,6 +192,7 @@ public class PlayerController : MonoBehaviour
         if (pauseMenuPanel != null) pauseMenuPanel.SetActive(false);
         if (settingsPanel != null) settingsPanel.SetActive(false);
         if (inventoryPanel != null) inventoryPanel.SetActive(false);
+        if (pickupPanel != null) pickupPanel.SetActive(false);
 
         if (descriptionText != null) descriptionText.text = "";
 
@@ -181,6 +200,9 @@ public class PlayerController : MonoBehaviour
         if (settingsButton != null) settingsButton.onClick.AddListener(OpenSettings);
         if (mainMenuButton != null) mainMenuButton.onClick.AddListener(LoadMainMenu);
         if (closeSettingsButton != null) closeSettingsButton.onClick.AddListener(CloseSettings);
+
+        if (yesPickupButton != null) yesPickupButton.onClick.AddListener(ConfirmPickup);
+        if (noPickupButton != null) noPickupButton.onClick.AddListener(CancelPickup);
 
         if (fpsSlider != null)
         {
@@ -233,7 +255,11 @@ public class PlayerController : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.Escape))
         {
-            if (isInventoryOpen)
+            if (isInspecting)
+            {
+                CancelPickup();
+            }
+            else if (isInventoryOpen)
             {
                 ToggleInventory();
             }
@@ -247,12 +273,19 @@ public class PlayerController : MonoBehaviour
             }
         }
 
-        if (!isPaused && Input.GetKeyDown(KeyCode.I))
+        if (!isPaused && !isInspecting && Input.GetKeyDown(KeyCode.I))
         {
             ToggleInventory();
         }
 
         if (isPaused || isInventoryOpen) return;
+
+        if (isInspecting)
+        {
+            UpdateInspectObjectPosition();
+            HandleInspectRotation();
+            return;
+        }
 
         HandleMouseLook();
         HandleSprintState();
@@ -267,7 +300,7 @@ public class PlayerController : MonoBehaviour
 
     private void FixedUpdate()
     {
-        if (isPaused || isInventoryOpen) return;
+        if (isPaused || isInventoryOpen || isInspecting) return;
 
         grounded = CheckGrounded();
         Move();
@@ -300,14 +333,146 @@ public class PlayerController : MonoBehaviour
 
                 if (Input.GetKeyDown(KeyCode.E))
                 {
-                    if (AddItemToInventory(lookAtItemDbIndex))
-                    {
-                        Destroy(lookAtObject);
-                        lookAtItemName = "";
-                    }
+                    StartInspect(lookAtObject, dbIndex);
                 }
             }
         }
+    }
+
+    private void StartInspect(GameObject obj, int dbIndex)
+    {
+        isInspecting = true;
+        currentInspectObject = obj;
+        currentInspectDbIndex = dbIndex;
+
+        // Сохраняем исходное состояние
+        inspectOriginalPos = obj.transform.position;
+        inspectOriginalRot = obj.transform.rotation;
+        inspectOriginalParent = obj.transform.parent;
+
+        // ЖЕСТКО отключаем физику и гасим всю инерцию, чтобы предмет никуда не улетел
+        if (obj.TryGetComponent<Rigidbody>(out Rigidbody itemRb))
+        {
+            inspectOriginalKinematic = itemRb.isKinematic;
+            itemRb.isKinematic = true;
+            itemRb.linearVelocity = Vector3.zero;
+            itemRb.angularVelocity = Vector3.zero;
+        }
+
+        // Временно отключаем коллайдеры
+        inspectDisabledColliders = obj.GetComponentsInChildren<Collider>();
+        foreach (var col in inspectDisabledColliders)
+        {
+            if (col != null) col.enabled = false;
+        }
+
+        EnsureHoldPointExists();
+
+        if (pickupPanel != null) pickupPanel.SetActive(true);
+        SetCursorState(false);
+    }
+
+    private void EnsureHoldPointExists()
+    {
+        if (inspectHoldPoint == null)
+        {
+            Transform existing = playerCamera.transform.Find("InspectHoldPoint");
+            if (existing != null)
+            {
+                inspectHoldPoint = existing;
+            }
+            else
+            {
+                GameObject defaultPoint = new GameObject("InspectHoldPoint");
+                defaultPoint.transform.SetParent(playerCamera.transform);
+                defaultPoint.transform.localPosition = new Vector3(0f, 0f, 0.8f);
+                defaultPoint.transform.localRotation = Quaternion.identity;
+                inspectHoldPoint = defaultPoint.transform;
+            }
+        }
+    }
+
+    private void UpdateInspectObjectPosition()
+    {
+        if (currentInspectObject == null || inspectHoldPoint == null) return;
+
+        // Плавный и очень быстрый подлет к точке
+        currentInspectObject.transform.position = Vector3.Lerp(
+            currentInspectObject.transform.position,
+            inspectHoldPoint.position,
+            Time.unscaledDeltaTime * inspectFlySpeed
+        );
+
+        // СТРОГАЯ ФИКСАЦИЯ: как только предмет оказывается близко, намертво привязываем его к координатам HoldPoint
+        if (Vector3.Distance(currentInspectObject.transform.position, inspectHoldPoint.position) < 0.005f)
+        {
+            currentInspectObject.transform.position = inspectHoldPoint.position;
+        }
+    }
+
+    private void HandleInspectRotation()
+    {
+        if (currentInspectObject == null) return;
+
+        // Вращение мышью БЕЗ нажатия кнопок
+        float rotX = Input.GetAxis("Mouse X") * itemRotationSpeed * 150f * Time.unscaledDeltaTime;
+        float rotY = Input.GetAxis("Mouse Y") * itemRotationSpeed * 150f * Time.unscaledDeltaTime;
+
+        currentInspectObject.transform.Rotate(playerCamera.transform.up, -rotX, Space.World);
+        currentInspectObject.transform.Rotate(playerCamera.transform.right, rotY, Space.World);
+    }
+
+    public void ConfirmPickup()
+    {
+        if (currentInspectDbIndex != -1 && AddItemToInventory(currentInspectDbIndex))
+        {
+            Destroy(currentInspectObject);
+        }
+        else
+        {
+            CancelPickup();
+            return;
+        }
+
+        CloseInspectUI();
+    }
+
+    public void CancelPickup()
+    {
+        if (currentInspectObject != null)
+        {
+            currentInspectObject.transform.SetParent(inspectOriginalParent);
+            currentInspectObject.transform.position = inspectOriginalPos;
+            currentInspectObject.transform.rotation = inspectOriginalRot;
+
+            if (currentInspectObject.TryGetComponent<Rigidbody>(out Rigidbody itemRb))
+            {
+                itemRb.isKinematic = inspectOriginalKinematic;
+                itemRb.linearVelocity = Vector3.zero;
+                itemRb.angularVelocity = Vector3.zero;
+            }
+
+            // Включаем коллайдеры обратно
+            if (inspectDisabledColliders != null)
+            {
+                foreach (var col in inspectDisabledColliders)
+                {
+                    if (col != null) col.enabled = true;
+                }
+            }
+        }
+
+        CloseInspectUI();
+    }
+
+    private void CloseInspectUI()
+    {
+        isInspecting = false;
+        currentInspectObject = null;
+        currentInspectDbIndex = -1;
+
+        if (pickupPanel != null) pickupPanel.SetActive(false);
+        SetCursorState(true);
     }
 
     private int GetItemDbIndexByTag(string tagToFind)
@@ -583,6 +748,9 @@ public class PlayerController : MonoBehaviour
     {
         if (isPaused || isInventoryOpen) return;
 
+        // Если осматриваем предмет, просто ничего не рисуем поверх (ни прицел, ни интерфейс)
+        if (isInspecting) return;
+
         DrawCrosshair();
         DrawStaminaBar();
         DrawFPSCounter();
@@ -595,7 +763,7 @@ public class PlayerController : MonoBehaviour
         {
             GUIStyle interactStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 22, // Размер шрифта
+                fontSize = 22,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter
             };
@@ -604,7 +772,6 @@ public class PlayerController : MonoBehaviour
             string text = $"{lookAtItemName} - [E]";
             Vector2 size = interactStyle.CalcSize(new GUIContent(text));
 
-            // Ставим по центру экрана по X и смещаем чуть ниже центра по Y
             float x = (Screen.width - size.x) / 2f;
             float y = (Screen.height / 2f) + (crosshairSize / 2f) + 30f;
 
