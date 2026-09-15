@@ -1288,7 +1288,7 @@ MonoBehaviour:
   cameraTarget: {fileID: 789143741}
   targetCameraPosition: {x: 0, y: 2, z: 5}
   cameraMoveDuration: 2
-  sceneIndex: 0
+  sceneIndex: 2
   ambientLight: {fileID: 281351939}
   targetAmbientColor: {r: 1, g: 1, b: 1, a: 1}
 --- !u!4 &1322045414
