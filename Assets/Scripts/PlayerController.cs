@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using System.Collections;
+using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using TMPro;
@@ -13,6 +14,7 @@ public struct ItemData
 }
 
 [RequireComponent(typeof(Rigidbody))]
+[RequireComponent(typeof(AudioSource))]
 public class PlayerController : MonoBehaviour
 {
     [Header("Ссылки")]
@@ -100,15 +102,43 @@ public class PlayerController : MonoBehaviour
     [Header("Инвентарь (TMP)")]
     [SerializeField] private GameObject inventoryPanel;
     [SerializeField] private TextMeshProUGUI descriptionText;
+    [SerializeField] private Button takeItemButton;
     [SerializeField] private Image[] slotImages;
     [SerializeField] private ItemData[] itemDatabase;
     [SerializeField] private float interactDistance = 3f;
+
+    [Header("Интерфейс Оружия / Патронов")]
+    [SerializeField] private GameObject ammoCanvas;
+    [SerializeField] private TextMeshProUGUI ammoText;
+    [SerializeField] private Image muzzleFlashImage;
+
+    [Header("Оружие / Экипировка")]
+    [SerializeField] private GameObject pistolInHand;
+    [SerializeField] private float equipDuration = 0.4f;
+    [SerializeField] private float yEquipOffset = 0.6f;
+    [SerializeField] private float xEquipAngle = 45f;
+    [SerializeField] private int currentAmmo = 12;
+    [SerializeField] private int ammoPerPickup = 12;
+
+    [Header("Анимация и Раскачка пистолета")]
+    [SerializeField] private Vector3 weaponSprintOffset = new Vector3(-0.05f, -0.08f, 0f);
+    [SerializeField] private Vector3 weaponSprintRotation = new Vector3(-45f, -25f, 0f);
+    [SerializeField] private float weaponSprintTransitionSpeed = 8f;
+    [SerializeField] private float walkWeaponBobAmount = 0.015f;
+
+    [Header("Параметры Стрельбы")]
+    [SerializeField] private GameObject bulletPrefab;
+    [SerializeField] private Transform firePoint;
+    [SerializeField] private float bulletSpeed = 90f;
+    [SerializeField] private AudioClip shootSound;
+    [SerializeField] private AudioClip emptySound;
 
     [Header("Тест Инвентаря")]
     [SerializeField] private bool giveTestItem;
     [SerializeField] private string testItemTag;
 
     private Rigidbody rb;
+    private AudioSource audioSource;
     private float pitch;
     private float yaw;
     private bool grounded;
@@ -127,7 +157,6 @@ public class PlayerController : MonoBehaviour
     private bool isPaused;
     private bool isInventoryOpen;
 
-    // Данные осмотра
     private bool isInspecting;
     private GameObject currentInspectObject;
     private int currentInspectDbIndex = -1;
@@ -144,6 +173,18 @@ public class PlayerController : MonoBehaviour
     private GameObject lookAtObject = null;
     private int lookAtItemDbIndex = -1;
 
+    private int selectedInventorySlot = -1;
+    private Vector3 pistolDefaultPos;
+    private Quaternion pistolDefaultRot;
+    private Coroutine equipCoroutine;
+    private Coroutine flashCoroutine;
+    private Coroutine recoilCoroutine;
+    private bool isPistolEquipped;
+    private bool isEquipping;
+
+    private Quaternion currentSwayRot;
+    private Quaternion recoilRot = Quaternion.identity;
+
     public float StaminaNormalized => maxStamina > 0f ? currentStamina / maxStamina : 0f;
 
     private void Awake()
@@ -151,6 +192,16 @@ public class PlayerController : MonoBehaviour
         rb = GetComponent<Rigidbody>();
         rb.freezeRotation = true;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
+
+        audioSource = GetComponent<AudioSource>();
+
+        if (pistolInHand != null)
+        {
+            pistolDefaultPos = pistolInHand.transform.localPosition;
+            pistolDefaultRot = pistolInHand.transform.localRotation;
+            currentSwayRot = pistolDefaultRot;
+            pistolInHand.SetActive(false);
+        }
     }
 
     private void Start()
@@ -184,6 +235,20 @@ public class PlayerController : MonoBehaviour
             }
         }
 
+        if (ammoCanvas != null)
+        {
+            ammoCanvas.SetActive(false);
+        }
+
+        if (muzzleFlashImage != null)
+        {
+            Color c = muzzleFlashImage.color;
+            c.a = 0f;
+            muzzleFlashImage.color = c;
+            muzzleFlashImage.gameObject.SetActive(false);
+        }
+
+        UpdateWeaponUI();
         SetupUI();
     }
 
@@ -195,6 +260,12 @@ public class PlayerController : MonoBehaviour
         if (pickupPanel != null) pickupPanel.SetActive(false);
 
         if (descriptionText != null) descriptionText.text = "";
+
+        if (takeItemButton != null)
+        {
+            takeItemButton.gameObject.SetActive(false);
+            takeItemButton.onClick.AddListener(OnTakeButtonClicked);
+        }
 
         if (resumeButton != null) resumeButton.onClick.AddListener(ResumeGame);
         if (settingsButton != null) settingsButton.onClick.AddListener(OpenSettings);
@@ -255,27 +326,29 @@ public class PlayerController : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.Escape))
         {
-            if (isInspecting)
-            {
-                CancelPickup();
-            }
-            else if (isInventoryOpen)
-            {
-                ToggleInventory();
-            }
-            else if (settingsPanel != null && settingsPanel.activeSelf)
-            {
-                CloseSettings();
-            }
-            else
-            {
-                TogglePause();
-            }
+            if (isInspecting) CancelPickup();
+            else if (isInventoryOpen) ToggleInventory();
+            else if (settingsPanel != null && settingsPanel.activeSelf) CloseSettings();
+            else TogglePause();
         }
 
         if (!isPaused && !isInspecting && Input.GetKeyDown(KeyCode.I))
         {
             ToggleInventory();
+        }
+
+        if (!isPaused && !isInventoryOpen && !isInspecting && isPistolEquipped && !isEquipping)
+        {
+            if (Input.GetKeyDown(KeyCode.G))
+            {
+                if (equipCoroutine != null) StopCoroutine(equipCoroutine);
+                equipCoroutine = StartCoroutine(HideWeaponRoutine());
+            }
+
+            if (Input.GetMouseButtonDown(0) && !isSprinting)
+            {
+                Shoot();
+            }
         }
 
         if (isPaused || isInventoryOpen) return;
@@ -293,6 +366,7 @@ public class PlayerController : MonoBehaviour
         HandleHeadBob();
         HandleFOV();
         HandleInteraction();
+        HandleWeaponSwayAndSprint();
 
         if (canJump && Input.GetButtonDown("Jump"))
             jumpRequested = true;
@@ -314,6 +388,129 @@ public class PlayerController : MonoBehaviour
         rb.AddForce(Vector3.up * -extraGravity, ForceMode.Acceleration);
     }
 
+    private void Shoot()
+    {
+        if (currentAmmo <= 0)
+        {
+            if (audioSource != null && emptySound != null)
+            {
+                audioSource.PlayOneShot(emptySound);
+            }
+            return;
+        }
+
+        currentAmmo--;
+        UpdateWeaponUI();
+
+        if (audioSource != null && shootSound != null)
+        {
+            audioSource.PlayOneShot(shootSound);
+        }
+
+        Vector3 spawnPos = (firePoint != null) ? firePoint.position : playerCamera.transform.position + playerCamera.transform.forward * 0.5f;
+        Quaternion spawnRot = playerCamera.transform.rotation;
+
+        GameObject bullet = null;
+        if (bulletPrefab != null)
+        {
+            bullet = Instantiate(bulletPrefab, spawnPos, spawnRot);
+        }
+        else
+        {
+            bullet = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            bullet.transform.position = spawnPos;
+            bullet.transform.localScale = Vector3.one * 0.12f;
+        }
+
+        if (!bullet.TryGetComponent<Rigidbody>(out Rigidbody bulletRb))
+        {
+            bulletRb = bullet.AddComponent<Rigidbody>();
+        }
+
+        bulletRb.useGravity = false;
+        bulletRb.linearVelocity = playerCamera.transform.forward * bulletSpeed;
+
+        Destroy(bullet, 4f);
+
+        // Вспышка (0.2 сек)
+        if (muzzleFlashImage != null)
+        {
+            if (flashCoroutine != null) StopCoroutine(flashCoroutine);
+            flashCoroutine = StartCoroutine(MuzzleFlashRoutine());
+        }
+
+        // Отдача пистолета (подъем на 30° и возврат за 0.4 сек)
+        if (recoilCoroutine != null) StopCoroutine(recoilCoroutine);
+        recoilCoroutine = StartCoroutine(RecoilRoutine());
+    }
+
+    private IEnumerator RecoilRoutine()
+    {
+        float totalDuration = 0.4f;
+        float kickDuration = 0.08f; // Быстрый толчок вверх
+        float returnDuration = totalDuration - kickDuration; // Плавный возврат
+        float elapsed = 0f;
+
+        // Подскок ствола вверх на 30 градусов
+        while (elapsed < kickDuration)
+        {
+            elapsed += Time.deltaTime;
+            float t = elapsed / kickDuration;
+            recoilRot = Quaternion.Euler(Mathf.Lerp(0f, -30f, t), 0f, 0f);
+            yield return null;
+        }
+
+        elapsed = 0f;
+
+        // Возврат в исходную позицию
+        while (elapsed < returnDuration)
+        {
+            elapsed += Time.deltaTime;
+            float t = elapsed / returnDuration;
+            recoilRot = Quaternion.Euler(Mathf.Lerp(-30f, 0f, t), 0f, 0f);
+            yield return null;
+        }
+
+        recoilRot = Quaternion.identity;
+    }
+
+    private IEnumerator MuzzleFlashRoutine()
+    {
+        muzzleFlashImage.gameObject.SetActive(true);
+
+        float halfDuration = 0.1f; // 0.1s появление + 0.1s затухание = 0.2s всего
+        float elapsed = 0f;
+
+        while (elapsed < halfDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float alpha = Mathf.Clamp01(elapsed / halfDuration);
+            SetImageAlpha(muzzleFlashImage, alpha);
+            yield return null;
+        }
+
+        elapsed = 0f;
+
+        while (elapsed < halfDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float alpha = Mathf.Clamp01(1f - (elapsed / halfDuration));
+            SetImageAlpha(muzzleFlashImage, alpha);
+            yield return null;
+        }
+
+        SetImageAlpha(muzzleFlashImage, 0f);
+        muzzleFlashImage.gameObject.SetActive(false);
+    }
+
+    private void SetImageAlpha(Image img, float alpha)
+    {
+        if (img == null) return;
+        Color c = img.color;
+        c.a = alpha;
+        img.color = c;
+    }
+
     private void HandleInteraction()
     {
         lookAtItemName = "";
@@ -323,8 +520,20 @@ public class PlayerController : MonoBehaviour
         if (Physics.Raycast(playerCamera.transform.position, playerCamera.transform.forward, out RaycastHit hit, interactDistance))
         {
             string hitTag = hit.collider.tag;
-            int dbIndex = GetItemDbIndexByTag(hitTag);
 
+            if (hitTag.Equals("ammo", System.StringComparison.OrdinalIgnoreCase))
+            {
+                lookAtItemName = "Патроны";
+                if (Input.GetKeyDown(KeyCode.E))
+                {
+                    currentAmmo += ammoPerPickup;
+                    UpdateWeaponUI();
+                    Destroy(hit.collider.gameObject);
+                }
+                return;
+            }
+
+            int dbIndex = GetItemDbIndexByTag(hitTag);
             if (dbIndex != -1)
             {
                 lookAtItemName = itemDatabase[dbIndex].itemName;
@@ -339,18 +548,145 @@ public class PlayerController : MonoBehaviour
         }
     }
 
+    private void UpdateWeaponUI()
+    {
+        if (ammoText != null)
+        {
+            ammoText.text = currentAmmo.ToString();
+        }
+    }
+
+    private void HandleWeaponSwayAndSprint()
+    {
+        if (pistolInHand == null || !pistolInHand.activeSelf || isEquipping) return;
+
+        Vector3 targetPos = pistolDefaultPos;
+        Quaternion targetRot = pistolDefaultRot;
+
+        bool isMoving = grounded && (Mathf.Abs(Input.GetAxisRaw("Horizontal")) > 0.01f || Mathf.Abs(Input.GetAxisRaw("Vertical")) > 0.01f);
+
+        if (isSprinting)
+        {
+            targetPos += weaponSprintOffset;
+            targetRot *= Quaternion.Euler(weaponSprintRotation);
+        }
+        else if (isMoving)
+        {
+            float waveX = Mathf.Cos(bobTimer * 0.5f) * walkWeaponBobAmount;
+            float waveY = Mathf.Sin(bobTimer) * walkWeaponBobAmount;
+            targetPos += new Vector3(waveX, waveY, 0f);
+        }
+
+        currentSwayRot = Quaternion.Slerp(currentSwayRot, targetRot, Time.deltaTime * weaponSprintTransitionSpeed);
+
+        pistolInHand.transform.localPosition = Vector3.Lerp(pistolInHand.transform.localPosition, targetPos, Time.deltaTime * weaponSprintTransitionSpeed);
+        pistolInHand.transform.localRotation = currentSwayRot * recoilRot;
+    }
+
+    private IEnumerator EquipWeaponRoutine()
+    {
+        isEquipping = true;
+        isPistolEquipped = true;
+        UpdateWeaponUI();
+
+        if (ammoCanvas != null)
+        {
+            ammoCanvas.SetActive(true);
+        }
+
+        Vector3 startPos = pistolDefaultPos - new Vector3(0f, yEquipOffset, 0f);
+        Quaternion startRot = pistolDefaultRot * Quaternion.Euler(xEquipAngle, 0f, 0f);
+
+        pistolInHand.transform.localPosition = startPos;
+        pistolInHand.transform.localRotation = startRot;
+
+        float elapsed = 0f;
+
+        while (elapsed < equipDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float t = Mathf.SmoothStep(0f, 1f, elapsed / equipDuration);
+
+            pistolInHand.transform.localPosition = Vector3.Lerp(startPos, pistolDefaultPos, t);
+            pistolInHand.transform.localRotation = Quaternion.Slerp(startRot, pistolDefaultRot, t);
+
+            yield return null;
+        }
+
+        pistolInHand.transform.localPosition = pistolDefaultPos;
+        pistolInHand.transform.localRotation = pistolDefaultRot;
+        currentSwayRot = pistolDefaultRot;
+        recoilRot = Quaternion.identity;
+
+        isEquipping = false;
+    }
+
+    private IEnumerator HideWeaponRoutine()
+    {
+        isEquipping = true;
+
+        Vector3 targetPos = pistolDefaultPos - new Vector3(0f, yEquipOffset, 0f);
+        Quaternion targetRot = pistolDefaultRot * Quaternion.Euler(xEquipAngle, 0f, 0f);
+
+        Vector3 currentPos = pistolInHand.transform.localPosition;
+        Quaternion currentRot = pistolInHand.transform.localRotation;
+
+        float elapsed = 0f;
+
+        while (elapsed < equipDuration)
+        {
+            elapsed += Time.unscaledDeltaTime;
+            float t = Mathf.SmoothStep(0f, 1f, elapsed / equipDuration);
+
+            pistolInHand.transform.localPosition = Vector3.Lerp(currentPos, targetPos, t);
+            pistolInHand.transform.localRotation = Quaternion.Slerp(currentRot, targetRot, t);
+
+            yield return null;
+        }
+
+        pistolInHand.SetActive(false);
+
+        if (ammoCanvas != null)
+        {
+            ammoCanvas.SetActive(false);
+        }
+
+        isPistolEquipped = false;
+        isEquipping = false;
+    }
+
+    private void OnTakeButtonClicked()
+    {
+        if (selectedInventorySlot == -1) return;
+
+        int dbIndex = inventorySlots[selectedInventorySlot];
+        if (dbIndex == -1) return;
+
+        string itemTag = itemDatabase[dbIndex].itemTag;
+
+        if (itemTag.Equals("Pistol", System.StringComparison.OrdinalIgnoreCase))
+        {
+            ToggleInventory();
+
+            if (pistolInHand != null && !isPistolEquipped)
+            {
+                if (equipCoroutine != null) StopCoroutine(equipCoroutine);
+                pistolInHand.SetActive(true);
+                equipCoroutine = StartCoroutine(EquipWeaponRoutine());
+            }
+        }
+    }
+
     private void StartInspect(GameObject obj, int dbIndex)
     {
         isInspecting = true;
         currentInspectObject = obj;
         currentInspectDbIndex = dbIndex;
 
-        // Сохраняем исходное состояние
         inspectOriginalPos = obj.transform.position;
         inspectOriginalRot = obj.transform.rotation;
         inspectOriginalParent = obj.transform.parent;
 
-        // ЖЕСТКО отключаем физику и гасим всю инерцию, чтобы предмет никуда не улетел
         if (obj.TryGetComponent<Rigidbody>(out Rigidbody itemRb))
         {
             inspectOriginalKinematic = itemRb.isKinematic;
@@ -359,7 +695,6 @@ public class PlayerController : MonoBehaviour
             itemRb.angularVelocity = Vector3.zero;
         }
 
-        // Временно отключаем коллайдеры
         inspectDisabledColliders = obj.GetComponentsInChildren<Collider>();
         foreach (var col in inspectDisabledColliders)
         {
@@ -377,10 +712,7 @@ public class PlayerController : MonoBehaviour
         if (inspectHoldPoint == null)
         {
             Transform existing = playerCamera.transform.Find("InspectHoldPoint");
-            if (existing != null)
-            {
-                inspectHoldPoint = existing;
-            }
+            if (existing != null) inspectHoldPoint = existing;
             else
             {
                 GameObject defaultPoint = new GameObject("InspectHoldPoint");
@@ -395,45 +727,27 @@ public class PlayerController : MonoBehaviour
     private void UpdateInspectObjectPosition()
     {
         if (currentInspectObject == null || inspectHoldPoint == null) return;
-
-        // Плавный и очень быстрый подлет к точке
-        currentInspectObject.transform.position = Vector3.Lerp(
-            currentInspectObject.transform.position,
-            inspectHoldPoint.position,
-            Time.unscaledDeltaTime * inspectFlySpeed
-        );
-
-        // СТРОГАЯ ФИКСАЦИЯ: как только предмет оказывается близко, намертво привязываем его к координатам HoldPoint
-        if (Vector3.Distance(currentInspectObject.transform.position, inspectHoldPoint.position) < 0.005f)
-        {
-            currentInspectObject.transform.position = inspectHoldPoint.position;
-        }
+        currentInspectObject.transform.position = Vector3.Lerp(currentInspectObject.transform.position, inspectHoldPoint.position, Time.unscaledDeltaTime * inspectFlySpeed);
+        if (Vector3.Distance(currentInspectObject.transform.position, inspectHoldPoint.position) < 0.005f) currentInspectObject.transform.position = inspectHoldPoint.position;
     }
 
     private void HandleInspectRotation()
     {
         if (currentInspectObject == null) return;
-
-        // Вращение мышью БЕЗ нажатия кнопок
         float rotX = Input.GetAxis("Mouse X") * itemRotationSpeed * 150f * Time.unscaledDeltaTime;
         float rotY = Input.GetAxis("Mouse Y") * itemRotationSpeed * 150f * Time.unscaledDeltaTime;
-
         currentInspectObject.transform.Rotate(playerCamera.transform.up, -rotX, Space.World);
         currentInspectObject.transform.Rotate(playerCamera.transform.right, rotY, Space.World);
     }
 
     public void ConfirmPickup()
     {
-        if (currentInspectDbIndex != -1 && AddItemToInventory(currentInspectDbIndex))
-        {
-            Destroy(currentInspectObject);
-        }
+        if (currentInspectDbIndex != -1 && AddItemToInventory(currentInspectDbIndex)) Destroy(currentInspectObject);
         else
         {
             CancelPickup();
             return;
         }
-
         CloseInspectUI();
     }
 
@@ -452,16 +766,11 @@ public class PlayerController : MonoBehaviour
                 itemRb.angularVelocity = Vector3.zero;
             }
 
-            // Включаем коллайдеры обратно
             if (inspectDisabledColliders != null)
             {
-                foreach (var col in inspectDisabledColliders)
-                {
-                    if (col != null) col.enabled = true;
-                }
+                foreach (var col in inspectDisabledColliders) if (col != null) col.enabled = true;
             }
         }
-
         CloseInspectUI();
     }
 
@@ -470,7 +779,6 @@ public class PlayerController : MonoBehaviour
         isInspecting = false;
         currentInspectObject = null;
         currentInspectDbIndex = -1;
-
         if (pickupPanel != null) pickupPanel.SetActive(false);
         SetCursorState(true);
     }
@@ -479,8 +787,7 @@ public class PlayerController : MonoBehaviour
     {
         for (int i = 0; i < itemDatabase.Length; i++)
         {
-            if (itemDatabase[i].itemTag == tagToFind)
-                return i;
+            if (itemDatabase[i].itemTag == tagToFind) return i;
         }
         return -1;
     }
@@ -505,16 +812,25 @@ public class PlayerController : MonoBehaviour
 
     public void OnInventorySlotClicked(int slotIndex)
     {
+        selectedInventorySlot = slotIndex;
+
         if (slotIndex >= 0 && slotIndex < inventorySlots.Length)
         {
             int dbIndex = inventorySlots[slotIndex];
-            if (dbIndex != -1 && descriptionText != null)
+            if (dbIndex != -1)
             {
-                descriptionText.text = itemDatabase[dbIndex].description;
+                if (descriptionText != null) descriptionText.text = itemDatabase[dbIndex].description;
+                if (takeItemButton != null)
+                {
+                    bool isPistol = itemDatabase[dbIndex].itemTag.Equals("Pistol", System.StringComparison.OrdinalIgnoreCase);
+                    takeItemButton.gameObject.SetActive(isPistol);
+                }
             }
-            else if (descriptionText != null)
+            else
             {
-                descriptionText.text = "";
+                if (descriptionText != null) descriptionText.text = "";
+                if (takeItemButton != null) takeItemButton.gameObject.SetActive(false);
+                selectedInventorySlot = -1;
             }
         }
     }
@@ -528,6 +844,8 @@ public class PlayerController : MonoBehaviour
             Time.timeScale = 0f;
             if (inventoryPanel != null) inventoryPanel.SetActive(true);
             if (descriptionText != null) descriptionText.text = "";
+            if (takeItemButton != null) takeItemButton.gameObject.SetActive(false);
+            selectedInventorySlot = -1;
             SetCursorState(false);
         }
         else
@@ -549,10 +867,7 @@ public class PlayerController : MonoBehaviour
             if (settingsPanel != null) settingsPanel.SetActive(false);
             SetCursorState(false);
         }
-        else
-        {
-            ResumeGame();
-        }
+        else ResumeGame();
     }
 
     public void ResumeGame()
@@ -657,8 +972,7 @@ public class PlayerController : MonoBehaviour
     {
         bool hasMoveInput = Mathf.Abs(Input.GetAxisRaw("Horizontal")) > 0.01f || Mathf.Abs(Input.GetAxisRaw("Vertical")) > 0.01f;
 
-        if (sprintLocked && currentStamina >= minStaminaToSprintAgain)
-            sprintLocked = false;
+        if (sprintLocked && currentStamina >= minStaminaToSprintAgain) sprintLocked = false;
 
         isSprinting = grounded && hasMoveInput && !sprintLocked && currentStamina > 0f && Input.GetKey(sprintKey);
     }
@@ -692,7 +1006,6 @@ public class PlayerController : MonoBehaviour
         if (!enableHeadBob || cameraTransform == null) return;
 
         bool isMoving = grounded && (Mathf.Abs(Input.GetAxisRaw("Horizontal")) > 0.01f || Mathf.Abs(Input.GetAxisRaw("Vertical")) > 0.01f);
-
         Vector3 targetLocalPos;
 
         if (isMoving)
@@ -719,7 +1032,6 @@ public class PlayerController : MonoBehaviour
     private void HandleFOV()
     {
         if (playerCamera == null) return;
-
         float targetFOV = isSprinting ? sprintFOV : normalFOV;
         playerCamera.fieldOfView = Mathf.Lerp(playerCamera.fieldOfView, targetFOV, Time.deltaTime * fovChangeSpeed);
     }
@@ -746,10 +1058,7 @@ public class PlayerController : MonoBehaviour
 
     private void OnGUI()
     {
-        if (isPaused || isInventoryOpen) return;
-
-        // Если осматриваем предмет, просто ничего не рисуем поверх (ни прицел, ни интерфейс)
-        if (isInspecting) return;
+        if (isPaused || isInventoryOpen || isInspecting) return;
 
         DrawCrosshair();
         DrawStaminaBar();
@@ -795,12 +1104,7 @@ public class PlayerController : MonoBehaviour
     {
         if (!showCrosshair || dotTex == null) return;
 
-        Rect rect = new Rect(
-            Screen.width / 2f - crosshairSize / 2f,
-            Screen.height / 2f - crosshairSize / 2f,
-            crosshairSize,
-            crosshairSize);
-
+        Rect rect = new Rect(Screen.width / 2f - crosshairSize / 2f, Screen.height / 2f - crosshairSize / 2f, crosshairSize, crosshairSize);
         GUI.color = crosshairColor;
         GUI.DrawTexture(rect, dotTex);
         GUI.color = Color.white;
@@ -814,12 +1118,7 @@ public class PlayerController : MonoBehaviour
         float barWidth = staminaBarSize.x;
         float barHeight = staminaBarSize.y;
 
-        GUIStyle labelStyle = new GUIStyle(GUI.skin.label)
-        {
-            fontSize = staminaLabelFontSize,
-            fontStyle = FontStyle.Bold,
-            alignment = TextAnchor.MiddleLeft
-        };
+        GUIStyle labelStyle = new GUIStyle(GUI.skin.label) { fontSize = staminaLabelFontSize, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft };
         labelStyle.normal.textColor = staminaUiColor;
 
         Vector2 labelSize = labelStyle.CalcSize(new GUIContent(staminaLabelText));
