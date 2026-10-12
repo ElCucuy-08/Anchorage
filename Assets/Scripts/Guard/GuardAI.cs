@@ -3,17 +3,16 @@ using UnityEngine.AI;
 
 public class GuardAI : MonoBehaviour
 {
-    [Header("Точки патруля")]
-    public Transform pointsParent;
-    [Header("Обзор днем")]
+    public Transform[] patrolPoints;
+
     public float dayRadius = 10f;
-    [Header("Обзор ночью")]
+
     public float nightRadius = 8f;
     public float nightAngle = 45f;
-    [Header("Настройки")]
+
     public bool isNight = false;
     public bool isCircle = true;
-    private Transform[] patrolPoints;
+
     private NavMeshAgent agent;
     private Transform player;
     private int currentPoint = 0;
@@ -32,15 +31,7 @@ public class GuardAI : MonoBehaviour
         if (playerObj != null)
             player = playerObj.transform;
 
-        if (pointsParent != null)
-        {
-            patrolPoints = new Transform[pointsParent.childCount];
-
-            for (int i = 0; i < pointsParent.childCount; i++)
-            {
-                patrolPoints[i] = pointsParent.GetChild(i);
-            }
-        }
+        
 
         if (patrolPoints != null && patrolPoints.Length > 0)
         {
