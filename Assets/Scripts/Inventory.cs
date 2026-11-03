@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using System.Collections.Generic;
+using UnityEngine;
 using UnityEngine.UI;
 
 // Единственный скрипт, который висит на игроке
@@ -16,8 +17,8 @@ public class Inventory : MonoBehaviour
 
     private int selectedSlot = 0;
 
-    private GameObject objectToPickup = null;
-    private Item itemDataToPickup = null;
+    // Список всех предметов, которые сейчас находятся в зоне досягаемости игрока
+    private List<PickupItem> itemsInRange = new List<PickupItem>();
 
     void Start()
     {
@@ -93,97 +94,95 @@ public class Inventory : MonoBehaviour
         }
 
         // Подбор предмета (E)
-        if (Input.GetKeyDown(KeyCode.E) && objectToPickup != null && itemDataToPickup != null)
+        if (Input.GetKeyDown(KeyCode.E) && itemsInRange.Count > 0)
         {
-            if (AddItem(itemDataToPickup))
-            {
-                Debug.Log($"Подобран предмет: {itemDataToPickup.itemName}");
-                Destroy(objectToPickup);
+            // Защита от «мертвых» ссылок на уничтоженные объекты
+            itemsInRange.RemoveAll(item => item == null);
 
-                objectToPickup = null;
-                itemDataToPickup = null;
+            if (itemsInRange.Count > 0)
+            {
+                PickupItem targetItem = itemsInRange[0];
+
+                if (targetItem != null && targetItem.itemData != null)
+                {
+                    if (AddItem(targetItem.itemData))
+                    {
+                        Debug.Log($"Подобран предмет: {targetItem.itemData.itemName}");
+
+                        itemsInRange.RemoveAt(0);
+                        Destroy(targetItem.gameObject);
+                    }
+                }
             }
         }
 
         // Выбрасывание предмета (Q)
         if (Input.GetKeyDown(KeyCode.Q))
         {
-            if (items != null && selectedSlot < items.Length && items[selectedSlot] != null)
-            {
-                Item droppedItem = items[selectedSlot];
-                Debug.Log($"Выброшен предмет: {droppedItem.itemName}");
+            if (items != null && selectedSlot();
+            if (col != null) col.isTrigger = false;
 
-                if (droppedItem.prefab != null)
-                {
-                    Vector3 spawnPos = dropPoint != null
-                        ? dropPoint.position
-                        : transform.position + transform.forward * 1.5f + Vector3.up;
+            // Включаем физику для реалистичного падения предмета при выбрасывании
+            Rigidbody rb = spawnedObject.GetComponent<Rigidbody>();
+            if (rb == null) rb = spawnedObject.AddComponent<Rigidbody>();
 
-                    GameObject spawnedObject = Instantiate(droppedItem.prefab, spawnPos, Quaternion.identity);
+            rb.isKinematic = false;
+            rb.useGravity = true;
 
-                    // Гарантируем, что у выброшенного объекта есть всё нужное для повторного подбора
-                    spawnedObject.tag = "Pickup";
+            PickupItem pickupComponent = spawnedObject.GetComponent<PickupItem>();
+            if (pickupComponent == null)
+                pickupComponent = spawnedObject.AddComponent<PickupItem>();
 
-                    Collider col = spawnedObject.GetComponent<Collider>();
-                    if (col != null) col.isTrigger = true;
-
-                    if (spawnedObject.GetComponent<Rigidbody>() == null)
-                    {
-                        Rigidbody rb = spawnedObject.AddComponent<Rigidbody>();
-                        rb.isKinematic = true;
-                        rb.useGravity = false;
-                    }
-
-                    PickupItem pickupComponent = spawnedObject.GetComponent<PickupItem>();
-                    if (pickupComponent == null)
-                        pickupComponent = spawnedObject.AddComponent<PickupItem>();
-
-                    pickupComponent.itemData = droppedItem;
-                }
-                else
-                {
-                    Debug.LogWarning("У этого предмета не назначен Prefab!");
-                }
-
-                items[selectedSlot] = null;
-                UpdateAllSlots();
-            }
+            pickupComponent.itemData = droppedItem;
         }
+        else
+        {
+            Debug.LogWarning("У этого предмета не назначен Prefab!");
+        }
+
+        items[selectedSlot] = null;
+        UpdateAllSlots();
+    }
+}
     }
 
     bool AddItem(Item newItem)
+{
+    for (int i = 0; i < items.Length; i++)
     {
-        for (int i = 0; i < items.Length; i++)
+        if (items[i] == null)
         {
-            if (items[i] == null)
-            {
-                items[i] = newItem;
-                UpdateAllSlots();
-                return true;
-            }
-        }
-
-        Debug.Log("Инвентарь полон!");
-        return false;
-    }
-
-    private void OnTriggerEnter(Collider other)
-    {
-        if (!other.CompareTag("Pickup")) return;
-
-        PickupItem pickupComponent = other.GetComponent<PickupItem>();
-        if (pickupComponent == null || pickupComponent.itemData == null) return;
-
-        objectToPickup = other.gameObject;
-        itemDataToPickup = pickupComponent.itemData;
-    }
-
-    private void OnTriggerExit(Collider other)
-    {
-        if (other.CompareTag("Pickup") && other.gameObject == objectToPickup)
-        {
-            objectToPickup = null;
-            itemDataToPickup = null;
+            items[i] = newItem;
+            UpdateAllSlots();
+            return true;
         }
     }
+
+    Debug.Log("Инвентарь полон!");
+    return false;
+}
+
+private void OnTriggerEnter(Collider other)
+{
+    if (!other.CompareTag("Pickup")) return;
+
+    PickupItem pickupComponent = other.GetComponent<PickupItem>();
+    if (pickupComponent == null || pickupComponent.itemData == null) return;
+
+    if (!itemsInRange.Contains(pickupComponent))
+    {
+        itemsInRange.Add(pickupComponent);
+    }
+}
+
+private void OnTriggerExit(Collider other)
+{
+    if (!other.CompareTag("Pickup")) return;
+
+    PickupItem pickupComponent = other.GetComponent<PickupItem>();
+    if (pickupComponent != null && itemsInRange.Contains(pickupComponent))
+    {
+        itemsInRange.Remove(pickupComponent);
+    }
+}
 }
