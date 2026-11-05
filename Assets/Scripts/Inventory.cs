@@ -2,7 +2,6 @@
 using UnityEngine;
 using UnityEngine.UI;
 
-// Единственный скрипт, который висит на игроке
 public class Inventory : MonoBehaviour
 {
     [Header("UI Элементы слотов")]
@@ -16,13 +15,11 @@ public class Inventory : MonoBehaviour
     public Transform dropPoint;
 
     [Header("Настройки удержания и вращения")]
-    public Transform handPoint; // Точка (Пустой GameObject) на игроке/камере, где будет визуально отображаться предмет в руке
-    public float rotationSpeed = 5f; // Скорость вращения предмета мышью
+    public Transform handPoint;
+    public float rotationSpeed = 200f;
 
     private int selectedSlot = 0;
-    private GameObject currentSpawnedHandObject = null; // Текущий 3D объект предмета в руке
-
-    // Список всех предметов, которые сейчас находятся в зоне досягаемости игрока
+    private GameObject currentSpawnedHandObject = null;
     private List<PickupItem> itemsInRange = new List<PickupItem>();
 
     void Start()
@@ -40,8 +37,6 @@ public class Inventory : MonoBehaviour
 
     void HandleSlotSelection()
     {
-        int previousSlot = selectedSlot;
-
         if (Input.GetKeyDown(KeyCode.Alpha1)) SelectSlot(0);
         if (Input.GetKeyDown(KeyCode.Alpha2)) SelectSlot(1);
         if (Input.GetKeyDown(KeyCode.Alpha3)) SelectSlot(2);
@@ -52,131 +47,187 @@ public class Inventory : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.Alpha8)) SelectSlot(7);
 
         float scroll = Input.GetAxis("Mouse ScrollWheel");
-        if (scroll > 0f) SelectSlot(selectedSlot > 0 ? selectedSlot - 1 : 7);
-        else if (scroll();
+        if (scroll > 0f)
+        {
+            int next = selectedSlot > 0 ? selectedSlot - 1 : 7;
+            SelectSlot(next);
+        }
+        else if (scroll < 0f)
+        {
+            int next = selectedSlot < 7 ? selectedSlot + 1 : 0;
+            SelectSlot(next);
+        }
+    }
+
+    void SelectSlot(int index)
+    {
+        selectedSlot = index;
+
+        for (int i = 0; i < slotHighlights.Length; i++)
+        {
+            if (slotHighlights[i] != null)
+                slotHighlights[i].SetActive(i == selectedSlot);
+        }
+
+        SpawnHandItem(items[selectedSlot]);
+    }
+
+    void HandleInteraction()
+    {
+        if (Input.GetKeyDown(KeyCode.E) && itemsInRange.Count > 0)
+        {
+            itemsInRange.RemoveAll(item => item == null || !item.gameObject.activeInHierarchy);
+
+            if (itemsInRange.Count > 0)
+            {
+                PickupItem targetItem = itemsInRange[0];
+
+                if (targetItem != null && targetItem.itemData != null)
+                {
+                    if (AddItem(targetItem.itemData))
+                    {
+                        Debug.Log($"Подобран предмет: {targetItem.itemData.itemName}");
+                        itemsInRange.RemoveAt(0);
+                        Destroy(targetItem.gameObject);
+                    }
+                }
+            }
+        }
+
+        if (Input.GetKeyDown(KeyCode.Q))
+        {
+            if (items[selectedSlot] != null)
+            {
+                DropItem(items[selectedSlot]);
+                items[selectedSlot] = null;
+                UpdateAllSlots();
+                SpawnHandItem(null);
+            }
+        }
+    }
+
+    bool AddItem(Item newItem)
+    {
+        for (int i = 0; i < items.Length; i++)
+        {
+            if (items[i] == null)
+            {
+                items[i] = newItem;
+                UpdateAllSlots();
+                if (i == selectedSlot) SpawnHandItem(newItem);
+                return true;
+            }
+        }
+        Debug.Log("Инвентарь полон!");
+        return false;
+    }
+
+    void DropItem(Item droppedItem)
+    {
+        // ЗАМЕНИТЕ 'prefab' на то имя, которое используется у вас в классе Item
+        if (droppedItem == null || droppedItem.prefab == null)
+        {
+            Debug.LogWarning("У предмета нет 3D-префаба для выброса!");
+            return;
+        }
+
+        Vector3 spawnPos = dropPoint != null ? dropPoint.position : transform.position + transform.forward * 1.5f;
+
+        // ЗАМЕНИТЕ 'prefab' здесь тоже
+        GameObject spawnedObject = Instantiate(droppedItem.prefab, spawnPos, Quaternion.identity);
+
+        Rigidbody rb = spawnedObject.GetComponent<Rigidbody>();
+        if (rb == null) rb = spawnedObject.AddComponent<Rigidbody>();
+        rb.isKinematic = false;
+        rb.useGravity = true;
+
+        Collider col = spawnedObject.GetComponent<Collider>();
+        if (col == null) col = spawnedObject.AddComponent<BoxCollider>();
+        col.isTrigger = true;
+
+        PickupItem pickupComponent = spawnedObject.GetComponent<PickupItem>();
+        if (pickupComponent == null) pickupComponent = spawnedObject.AddComponent<PickupItem>();
+        pickupComponent.itemData = droppedItem;
+
+        spawnedObject.tag = "Pickup";
+    }
+
+    void HandleItemRotation()
+    {
+        if (Input.GetMouseButton(0) && currentSpawnedHandObject != null)
+        {
+            float mouseX = Input.GetAxis("Mouse X") * rotationSpeed * Time.deltaTime;
+            float mouseY = Input.GetAxis("Mouse Y") * rotationSpeed * Time.deltaTime;
+
+            currentSpawnedHandObject.transform.Rotate(Vector3.up, -mouseX, Space.World);
+            currentSpawnedHandObject.transform.Rotate(Vector3.right, mouseY, Space.World);
+        }
+    }
+
+    void SpawnHandItem(Item itemToSpawn)
+    {
+        if (currentSpawnedHandObject != null)
+        {
+            Destroy(currentSpawnedHandObject);
+            currentSpawnedHandObject = null;
+        }
+
+        // ЗАМЕНИТЕ 'prefab' здесь тоже
+        if (itemToSpawn == null || itemToSpawn.prefab == null || handPoint == null) return;
+
+        // ЗАМЕНИТЕ 'prefab' здесь тоже
+        currentSpawnedHandObject = Instantiate(itemToSpawn.prefab, handPoint);
+        currentSpawnedHandObject.transform.localPosition = Vector3.zero;
+        currentSpawnedHandObject.transform.localRotation = Quaternion.identity;
+
+        Collider col = currentSpawnedHandObject.GetComponent<Collider>();
         if (col != null) col.enabled = false;
 
         Rigidbody rb = currentSpawnedHandObject.GetComponent<Rigidbody>();
         if (rb != null) rb.isKinematic = true;
 
-        // Отключаем на нем скрипт подбора, чтобы случайно не сработал
         PickupItem pi = currentSpawnedHandObject.GetComponent<PickupItem>();
         if (pi != null) pi.enabled = false;
     }
-}
-    }
 
-    void HandleInteraction()
-{
-    // Изменено: Убрано использование на ЛКМ (так как теперь ЛКМ отвечает за вращение)
-    // Если вам нужно действие на ЛКМ, его логику можно перенести, например, на ПКМ (Input.GetMouseButtonDown(1))
-
-    // Подбор предмета (E)
-    if (Input.GetKeyDown(KeyCode.E) && itemsInRange.Count > 0)
+    void UpdateAllSlots()
     {
-        itemsInRange.RemoveAll(item => item == null);
-
-        if (itemsInRange.Count > 0)
+        for (int i = 0; i < items.Length; i++)
         {
-            PickupItem targetItem = itemsInRange[0];
-
-            if (targetItem != null && targetItem.itemData != null)
+            if (items[i] != null && items[i].icon != null && slotIcons[i] != null)
             {
-                if (AddItem(targetItem.itemData))
-                {
-                    Debug.Log($"Подобран предмет: {targetItem.itemData.itemName}");
-
-                    itemsInRange.RemoveAt(0);
-                    Destroy(targetItem.gameObject);
-                }
+                slotIcons[i].sprite = items[i].icon;
+                slotIcons[i].enabled = true;
+            }
+            else if (slotIcons[i] != null)
+            {
+                slotIcons[i].sprite = null;
+                slotIcons[i].enabled = false;
             }
         }
     }
 
-    // Выбрасывание предмета (Q)
-    if (Input.GetKeyDown(KeyCode.Q))
+    private void OnTriggerEnter(Collider other)
     {
-        if (items != null && selectedSlot();
-        if (col != null) col.isTrigger = false;
+        if (!other.CompareTag("Pickup")) return;
 
-        Rigidbody rb = spawnedObject.GetComponent<Rigidbody>();
-        if (rb == null) rb = spawnedObject.AddComponent<Rigidbody>();
+        PickupItem pickupComponent = other.GetComponent<PickupItem>();
+        if (pickupComponent == null || pickupComponent.itemData == null) return;
 
-        rb.isKinematic = false;
-        rb.useGravity = true;
-
-        PickupItem pickupComponent = spawnedObject.GetComponent<PickupItem>();
-        if (pickupComponent == null)
-            pickupComponent = spawnedObject.AddComponent<PickupItem>();
-
-        pickupComponent.itemData = droppedItem;
-    }
-    else
-    {
-        Debug.LogWarning("У этого предмета не назначен Prefab!");
-    }
-
-    items[selectedSlot] = null;
-    UpdateAllSlots();
-}
-        }
-    }
-
-    // Новая логика: Вращение предмета при зажатии ЛКМ
-    void HandleItemRotation()
-{
-    // Проверяем, зажата ли ЛКМ и создан ли сейчас объект в руке
-    if (Input.GetMouseButton(0) && currentSpawnedHandObject != null)
-    {
-        // Считываем смещение мыши по осям X и Y
-        float mouseX = Input.GetAxis("Mouse X") * rotationSpeed;
-        float mouseY = Input.GetAxis("Mouse Y") * rotationSpeed;
-
-        // Вращаем объект относительно осей мира или камеры игрока
-        // mouseX крутит объект влево-вправо (вокруг вертикальной оси Y)
-        // mouseY крутит объект вверх-вниз (вокруг горизонтальной оси X)
-        currentSpawnedHandObject.transform.Rotate(Vector3.up, -mouseX, Space.World);
-        currentSpawnedHandObject.transform.Rotate(Vector3.right, mouseY, Space.World);
-    }
-}
-
-bool AddItem(Item newItem)
-{
-    for (int i = 0; i < items.Length; i++)
-    {
-        if (items[i] == null)
+        if (!itemsInRange.Contains(pickupComponent))
         {
-            items[i] = newItem;
-            UpdateAllSlots();
-            return true;
+            itemsInRange.Add(pickupComponent);
         }
     }
 
-    Debug.Log("Инвентарь полон!");
-    return false;
-}
-
-private void OnTriggerEnter(Collider other)
-{
-    if (!other.CompareTag("Pickup")) return;
-
-    PickupItem pickupComponent = other.GetComponent<PickupItem>();
-    if (pickupComponent == null || pickupComponent.itemData == null) return;
-
-    if (!itemsInRange.Contains(pickupComponent))
+    private void OnTriggerExit(Collider other)
     {
-        itemsInRange.Add(pickupComponent);
-    }
-}
+        if (!other.CompareTag("Pickup")) return;
 
-private void OnTriggerExit(Collider other)
-{
-    if (!other.CompareTag("Pickup")) return;
-
-    PickupItem pickupComponent = other.GetComponent<PickupItem>();
-    if (pickupComponent != null && itemsInRange.Contains(pickupComponent))
-    {
-        itemsInRange.Remove(pickupComponent);
+        PickupItem pickupComponent = other.GetComponent<PickupItem>();
+        if (pickupComponent != null && itemsInRange.Contains(pickupComponent))
+        {
+            itemsInRange.Remove(pickupComponent);
+        }
     }
-}
 }
