@@ -6,9 +6,9 @@ public class GuardAI : MonoBehaviour
     public Transform[] patrolPoints;
 
     public float dayRadius = 10f;
-
     public float nightRadius = 8f;
     public float nightAngle = 45f;
+    public float killDistance = 2f;
 
     public bool isNight = false;
     public bool isCircle = true;
@@ -20,18 +20,16 @@ public class GuardAI : MonoBehaviour
     private bool forward = true;
     private Vector3 lastKnownPos;
 
-
     void Start()
     {
         agent = GetComponent<NavMeshAgent>();
 
-        GameObject playerObj =
-        GameObject.FindGameObjectWithTag("Player");
+        GameObject playerObj = GameObject.FindGameObjectWithTag("Player");
 
         if (playerObj != null)
+        {
             player = playerObj.transform;
-
-        
+        }
 
         if (patrolPoints != null && patrolPoints.Length > 0)
         {
@@ -41,36 +39,37 @@ public class GuardAI : MonoBehaviour
 
     void Update()
     {
-        if (!chasing)
+        if (player == null)
         {
             Patrol();
+            return;
+        }
+
+        DetectPlayer();
+
+        if (chasing)
+        {
+            Chase();
+            KillPlayer();
         }
         else
         {
-            if (player != null)
-                transform.LookAt(player);
+            Patrol();
         }
-
-        if (player != null)
-        {
-            DetectPlayer();
-        }
-
-        Chase();
     }
 
     void Patrol()
     {
         if (patrolPoints == null || patrolPoints.Length == 0)
+        {
             return;
+        }
 
-        if (!agent.pathPending &&
-        agent.remainingDistance <= agent.stoppingDistance)
+        if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance)
         {
             if (isCircle)
             {
-                currentPoint =
-                (currentPoint + 1) % patrolPoints.Length;
+                currentPoint = (currentPoint + 1) % patrolPoints.Length;
             }
             else
             {
@@ -79,27 +78,28 @@ public class GuardAI : MonoBehaviour
                     currentPoint++;
 
                     if (currentPoint >= patrolPoints.Length - 1)
+                    {
                         forward = false;
+                    }
                 }
                 else
                 {
                     currentPoint--;
 
                     if (currentPoint <= 0)
+                    {
                         forward = true;
+                    }
                 }
             }
 
-            agent.SetDestination(
-            patrolPoints[currentPoint].position);
+            agent.SetDestination(patrolPoints[currentPoint].position);
         }
     }
 
     void DetectPlayer()
     {
-        float dist =
-        Vector3.Distance(transform.position,
-        player.position);
+        float dist = Vector3.Distance(transform.position, player.position);
 
         if (!isNight)
         {
@@ -114,11 +114,8 @@ public class GuardAI : MonoBehaviour
 
         if (dist < nightRadius)
         {
-            Vector3 dir =
-            (player.position - transform.position).normalized;
-
-            float angle =
-            Vector3.Angle(transform.forward, dir);
+            Vector3 dir = (player.position - transform.position).normalized;
+            float angle = Vector3.Angle(transform.forward, dir);
 
             if (angle < nightAngle && HasLineOfSight())
             {
@@ -130,14 +127,16 @@ public class GuardAI : MonoBehaviour
 
     bool HasLineOfSight()
     {
+        if (player == null)
+        {
+            return false;
+        }
+
         RaycastHit hit;
 
         Vector3 start = transform.position + Vector3.up * 1.7f;
-
         Vector3 dir = (player.position - start).normalized;
-
-        float distance =
-        Vector3.Distance(start, player.position);
+        float distance = Vector3.Distance(start, player.position);
 
         if (Physics.Raycast(start, dir, out hit, distance))
         {
@@ -149,27 +148,58 @@ public class GuardAI : MonoBehaviour
 
     void Chase()
     {
-        if (!chasing)
-            return;
-
-        lastKnownPos = player.position;
-
-        agent.SetDestination(lastKnownPos);
-
-        if (!HasLineOfSight())
+        if (player == null)
         {
-            if (!agent.pathPending &&
-            agent.remainingDistance <=
-            agent.stoppingDistance)
+            return;
+        }
+
+        if (HasLineOfSight())
+        {
+            lastKnownPos = player.position;
+            agent.SetDestination(player.position);
+        }
+        else
+        {
+            agent.SetDestination(lastKnownPos);
+
+            if (!agent.pathPending && agent.remainingDistance <= agent.stoppingDistance)
             {
                 chasing = false;
 
                 if (patrolPoints.Length > 0)
                 {
-                    agent.SetDestination(
-                    patrolPoints[currentPoint].position);
+                    agent.SetDestination(patrolPoints[currentPoint].position);
                 }
             }
         }
+    }
+
+    void KillPlayer()
+    {
+        if (player == null)
+        {
+            return;
+        }
+
+        float dist = Vector3.Distance(transform.position, player.position);
+
+        if (dist <= killDistance)
+        {
+            Destroy(player.gameObject);
+
+            player = null;
+            chasing = false;
+
+            if (patrolPoints.Length > 0)
+            {
+                agent.SetDestination(patrolPoints[currentPoint].position);
+            }
+        }
+    }
+
+    void OnDrawGizmosSelected()
+    {
+        Gizmos.color = Color.red;
+        Gizmos.DrawWireSphere(transform.position, killDistance);
     }
 }

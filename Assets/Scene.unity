@@ -66523,6 +66523,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!95 &114801502
@@ -87096,6 +87097,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!95 &150740307
@@ -87194,6 +87196,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!95 &150836484
@@ -89075,6 +89078,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!95 &153208887
@@ -146643,6 +146647,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!95 &252088994
@@ -160514,6 +160519,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!95 &275395851
@@ -167622,6 +167628,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!95 &286420884
@@ -180625,6 +180632,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!95 &310886287
@@ -456653,6 +456661,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!1 &806880902
@@ -758372,7 +758381,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f77200c54f8bd6e4bb7654b96784662b, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 148
+      value: 78.97
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: f77200c54f8bd6e4bb7654b96784662b, type: 3}
       propertyPath: m_LocalRotation.w
@@ -758405,6 +758414,10 @@ PrefabInstance:
     - target: {fileID: 919132149155446097, guid: f77200c54f8bd6e4bb7654b96784662b, type: 3}
       propertyPath: m_Name
       value: Prisoner_02
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: f77200c54f8bd6e4bb7654b96784662b, type: 3}
+      propertyPath: m_TagString
+      value: Player
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
@@ -905584,6 +905597,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!95 &1619858916
@@ -968426,6 +968440,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!95 &1728499498
@@ -1077287,6 +1077302,7 @@ MonoBehaviour:
   dayRadius: 10
   nightRadius: 8
   nightAngle: 45
+  killDistance: 2
   isNight: 0
   isCircle: 1
 --- !u!95 &1918205085
