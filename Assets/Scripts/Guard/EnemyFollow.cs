@@ -67,7 +67,7 @@ public class EnemyFollow : MonoBehaviour
                 playerDeath = playerTarget.GetComponentInParent<PlayerDeath>();
 
             if (playerDeath != null && !playerDeath.IsDead)
-                playerDeath.TakeDamage(float.MaxValue, "Вас поймали");
+                playerDeath.TouchEnemy("Вас поймали");
         }
     }
 }

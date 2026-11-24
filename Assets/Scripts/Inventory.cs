@@ -18,6 +18,10 @@ public class Inventory : MonoBehaviour
     public Transform handPoint;
     public float rotationSpeed = 200f;
 
+    [Header("Здоровье")]
+    [Tooltip("Сколько здоровья даёт зажигалка, если у предмета не задано своё значение.")]
+    [SerializeField] private float lighterHealAmount = 10f;
+
     private int selectedSlot = 0;
     private GameObject currentSpawnedHandObject = null;
     private List<PickupItem> itemsInRange = new List<PickupItem>();
@@ -87,6 +91,7 @@ public class Inventory : MonoBehaviour
                     if (AddItem(targetItem.itemData))
                     {
                         Debug.Log($"Подобран предмет: {targetItem.itemData.itemName}");
+                        HealFromPickup(targetItem);
                         itemsInRange.RemoveAt(0);
                         Destroy(targetItem.gameObject);
                     }
@@ -120,6 +125,42 @@ public class Inventory : MonoBehaviour
         }
         Debug.Log("Инвентарь полон!");
         return false;
+    }
+
+    /// <summary>Зажигалки и фонарики дают здоровье при подборе.</summary>
+    void HealFromPickup(PickupItem pickup)
+    {
+        if (pickup == null)
+            return;
+
+        float heal = pickup.healAmount > 0f
+            ? pickup.healAmount
+            : (IsLighter(pickup.itemData) ? lighterHealAmount : 0f);
+
+        if (heal <= 0f)
+            return;
+
+        PlayerDeath playerDeath = GetComponent<PlayerDeath>();
+
+        if (playerDeath == null)
+            playerDeath = GetComponentInParent<PlayerDeath>();
+
+        if (playerDeath != null)
+        {
+            playerDeath.Heal(heal);
+            Debug.Log($"+{heal} здоровья");
+        }
+    }
+
+    static bool IsLighter(Item item)
+    {
+        if (item == null || string.IsNullOrEmpty(item.itemName))
+            return false;
+
+        string name = item.itemName.ToLowerInvariant();
+
+        return name.Contains("зажиг") || name.Contains("lighter") ||
+               name.Contains("фонар") || name.Contains("flashlight");
     }
 
     void DropItem(Item droppedItem)

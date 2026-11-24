@@ -4,4 +4,7 @@
 public class PickupItem : MonoBehaviour
 {
     public Item itemData;
+
+    [Tooltip("Сколько здоровья даёт предмет. 0 — зажигалки лечат автоматически.")]
+    public float healAmount = 0f;
 }

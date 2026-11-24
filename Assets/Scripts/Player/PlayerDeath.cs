@@ -15,11 +15,17 @@ public class PlayerDeath : MonoBehaviour
 {
     [Header("Здоровье")]
     [SerializeField] private float maxHealth = 100f;
+    [Tooltip("Сколько здоровья у игрока в начале игры и после возрождения.")]
+    [SerializeField] private float startingHealth = 50f;
     [SerializeField] private float spawnGraceTime = 1f;
     [SerializeField] private float respawnInvulnerability = 2.5f;
+    [Tooltip("Пауза между ударами врагов, чтобы касание не снимало здоровье каждый кадр.")]
+    [SerializeField] private float damageCooldown = 1f;
+    [Tooltip("Сколько здоровья снимает касание врага.")]
+    [SerializeField] private float enemyTouchDamage = 10f;
 
     [Header("Когда наступает смерть")]
-    [Tooltip("Дистанция, на которой враг считается поймавшим игрока.")]
+    [Tooltip("Дистанция, на которой враг наносит игроку урон.")]
     [SerializeField] private float catchDistance = 1.8f;
     [SerializeField] private float enemyScanInterval = 0.2f;
     [SerializeField] private bool dieOnFall = true;
@@ -38,7 +44,7 @@ public class PlayerDeath : MonoBehaviour
     [Header("Экран смерти")]
     [SerializeField] private string deathTitle = "ВЫ ПОГИБЛИ";
     [SerializeField] private string defaultDeathReason = "Вас обидели";
-    [SerializeField] private string restartHint = "R — попробовать снова";
+    [SerializeField] private string restartHint = "R или клик — попробовать снова";
     [SerializeField] private float damageFlashStrength = 0.4f;
 
     private float health;
@@ -60,8 +66,10 @@ public class PlayerDeath : MonoBehaviour
 
     private float deathStartTime;
     private float invulnerableUntil;
+    private float nextDamageTime;
     private float nextEnemyScan;
     private float damageFlash;
+    private float healFlash;
     private Coroutine deathRoutine;
 
     private CursorLockMode previousCursorLockMode;
@@ -71,6 +79,7 @@ public class PlayerDeath : MonoBehaviour
     private GUIStyle titleStyle;
     private GUIStyle subtitleStyle;
     private GUIStyle hintStyle;
+    private GUIStyle healthStyle;
 
     public float Health => health;
     public float MaxHealth => maxHealth;
@@ -78,7 +87,7 @@ public class PlayerDeath : MonoBehaviour
 
     private void Awake()
     {
-        health = maxHealth;
+        health = Mathf.Clamp(startingHealth, 1f, maxHealth);
         invulnerableUntil = Time.unscaledTime + spawnGraceTime;
         CaptureSpawnPoint();
     }
@@ -87,6 +96,9 @@ public class PlayerDeath : MonoBehaviour
     {
         if (damageFlash > 0f)
             damageFlash = Mathf.MoveTowards(damageFlash, 0f, Time.unscaledDeltaTime * 3f);
+
+        if (healFlash > 0f)
+            healFlash = Mathf.MoveTowards(healFlash, 0f, Time.unscaledDeltaTime * 3f);
 
         if (isDead)
         {
@@ -116,14 +128,34 @@ public class PlayerDeath : MonoBehaviour
     /// <summary>Наносит урон. Когда здоровье заканчивается — запускает смерть.</summary>
     public void TakeDamage(float amount, string reason = null)
     {
-        if (isDead || Time.unscaledTime < invulnerableUntil)
+        if (isDead || Time.unscaledTime < invulnerableUntil || Time.unscaledTime < nextDamageTime)
             return;
 
+        nextDamageTime = Time.unscaledTime + damageCooldown;
         health = Mathf.Max(0f, health - Mathf.Max(0f, amount));
         damageFlash = 1f;
 
         if (health <= 0f)
             Kill(reason);
+    }
+
+    /// <summary>Касание врага: снимает стандартный урон с общей паузой между ударами.</summary>
+    public void TouchEnemy(string reason = "Вас поймали")
+    {
+        TakeDamage(enemyTouchDamage, reason);
+    }
+
+    /// <summary>Лечит игрока (например, за поднятую зажигалку).</summary>
+    public void Heal(float amount)
+    {
+        if (isDead || amount <= 0f)
+            return;
+
+        float before = health;
+        health = Mathf.Min(maxHealth, health + amount);
+
+        if (health > before)
+            healFlash = 1f;
     }
 
     /// <summary>Мгновенно убивает игрока и запускает анимацию смерти.</summary>
@@ -136,6 +168,8 @@ public class PlayerDeath : MonoBehaviour
         health = 0f;
         deathReason = string.IsNullOrEmpty(reason) ? defaultDeathReason : reason;
         deathStartTime = Time.unscaledTime;
+
+        Debug.Log("[PlayerDeath] Смерть: " + deathReason);
 
         deathRoutine = StartCoroutine(DeathRoutine());
     }
@@ -165,10 +199,12 @@ public class PlayerDeath : MonoBehaviour
         if (controller != null)
             controller.enabled = true;
 
-        health = maxHealth;
+        health = Mathf.Clamp(startingHealth, 1f, maxHealth);
         isDead = false;
         damageFlash = 0f;
+        healFlash = 0f;
         invulnerableUntil = Time.unscaledTime + respawnInvulnerability;
+        nextDamageTime = 0f;
         nextEnemyScan = 0f;
 
         EnablePlayerScripts();
@@ -176,6 +212,8 @@ public class PlayerDeath : MonoBehaviour
         // Возвращаем управление курсором в то состояние, в котором игра была до смерти.
         Cursor.lockState = previousCursorLockMode;
         Cursor.visible = previousCursorVisible;
+
+        Debug.Log("[PlayerDeath] Респавн на " + spawnPosition);
     }
 
     private void CaptureSpawnPoint()
@@ -209,7 +247,7 @@ public class PlayerDeath : MonoBehaviour
 
             if (delta.sqrMagnitude <= catchSqrDistance)
             {
-                Kill(defaultDeathReason);
+                TouchEnemy();
                 return;
             }
         }
@@ -412,26 +450,30 @@ public class PlayerDeath : MonoBehaviour
         disabledPlayerScripts.Clear();
     }
 
+    // Любая клавиша или клик мышью: так рестарт сработает, даже если
+    // R не дошла до Game view (например, фокус ушёл в редактор).
     private static bool RestartPressed()
     {
-        return Input.GetKeyDown(KeyCode.R) ||
-               Input.GetKeyDown(KeyCode.Space) ||
-               Input.GetKeyDown(KeyCode.Return);
+        return Input.anyKeyDown;
     }
 
     private void OnGUI()
     {
-        if (!isDead && damageFlash <= 0f)
-            return;
-
         EnsureGuiStyles();
-        EnsureVignetteTexture();
+
+        if (healFlash > 0f)
+            DrawFullScreen(new Color(0.15f, 0.7f, 0.25f, healFlash * 0.3f));
 
         if (damageFlash > 0f)
             DrawFullScreen(new Color(0.55f, 0f, 0f, damageFlash * damageFlashStrength));
 
         if (!isDead)
+        {
+            DrawHealthBar();
             return;
+        }
+
+        EnsureVignetteTexture();
 
         float elapsed = Time.unscaledTime - deathStartTime;
 
@@ -483,6 +525,34 @@ public class PlayerDeath : MonoBehaviour
         }
     }
 
+    private void DrawHealthBar()
+    {
+        float width = Mathf.Min(Screen.width * 0.22f, 260f);
+        float height = Mathf.Max(10f, Screen.height * 0.016f);
+        float x = Screen.width * 0.025f;
+        float y = Screen.height * 0.035f;
+
+        float fraction = maxHealth > 0f ? Mathf.Clamp01(health / maxHealth) : 0f;
+        Color fill = fraction > 0.5f
+            ? new Color(0.35f, 0.78f, 0.36f)
+            : fraction > 0.25f
+                ? new Color(0.95f, 0.76f, 0.2f)
+                : new Color(0.88f, 0.2f, 0.18f);
+
+        Color oldColor = GUI.color;
+
+        GUI.color = new Color(0f, 0f, 0f, 0.55f);
+        GUI.DrawTexture(new Rect(x - 2f, y - 2f, width + 4f, height + 4f), Texture2D.whiteTexture);
+
+        GUI.color = fill;
+        GUI.DrawTexture(new Rect(x, y, width * fraction, height), Texture2D.whiteTexture);
+
+        GUI.color = oldColor;
+
+        GUI.Label(new Rect(x, y + height * 1.4f, width, height * 2f),
+            "ЗДОРОВЬЕ " + Mathf.CeilToInt(health) + " / " + Mathf.RoundToInt(maxHealth), healthStyle);
+    }
+
     private void DrawFullScreen(Color color)
     {
         Color oldColor = GUI.color;
@@ -527,6 +597,13 @@ public class PlayerDeath : MonoBehaviour
             fontStyle = FontStyle.Normal,
             fontSize = Mathf.Max(13, Mathf.RoundToInt(Screen.height * 0.024f))
         };
+
+        healthStyle = new GUIStyle(GUI.skin.label)
+        {
+            fontStyle = FontStyle.Bold,
+            fontSize = Mathf.Max(12, Mathf.RoundToInt(Screen.height * 0.022f))
+        };
+        healthStyle.normal.textColor = new Color(0.92f, 0.92f, 0.9f);
     }
 
     private void EnsureVignetteTexture()
@@ -597,5 +674,8 @@ public static class PlayerDeathBootstrap
 
         if (player.GetComponent<PlayerDeath>() == null)
             player.AddComponent<PlayerDeath>();
+
+        if (player.GetComponent<ObjectiveHud>() == null)
+            player.AddComponent<ObjectiveHud>();
     }
 }
