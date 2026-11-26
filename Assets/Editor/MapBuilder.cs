@@ -20,7 +20,7 @@ public static class MapBuilder
 
     static Material _asphalt, _line, _sidewalk, _building, _roofRed, _roofDark, _wood,
                    _woodDark, _brick, _concrete, _metalFence, _grass, _glass, _stone,
-                   _concreteWall, _metal, _sign, _light, _woodWall, _door, _windows,
+                   _concreteWall, _metal, _sign, _light, _lamp, _woodWall, _door, _windows,
                    _red, _white, _grey, _dark, _sand, _leafDark, _trunk, _pine;
 
     [MenuItem("Tools/Anchorage/Build City Map")]
@@ -57,7 +57,7 @@ public static class MapBuilder
 
     static void SaveScene()
     {
-        string path = "Assets/Scene.unity";
+        string path = "Assets/Scene/Scene.unity";
         Directory.CreateDirectory(Path.GetDirectoryName(path));
         EditorSceneManager.SaveScene(EditorSceneManager.GetActiveScene(), path);
         Debug.Log("[MapBuilder] Сцена сохранена: " + path);
@@ -86,6 +86,15 @@ public static class MapBuilder
         return m;
     }
 
+    static void MakeEmissive(Material m, Color emission)
+    {
+        if (m == null) return;
+        m.EnableKeyword("_EMISSION");
+        m.SetColor("_EmissionColor", emission);
+        m.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+        EditorUtility.SetDirty(m);
+    }
+
     static void CreateMaterials()
     {
         _asphalt   = Mat("Asphalt",  new Color(0.16f, 0.16f, 0.17f), 0.05f);
@@ -105,6 +114,8 @@ public static class MapBuilder
         _metal     = Mat("Metal",    new Color(0.55f, 0.57f, 0.60f), 0.4f, 0.7f);
         _metalFence= Mat("MetalFence", new Color(0.30f, 0.32f, 0.34f), 0.3f, 0.6f);
         _light     = Mat("Light",    new Color(1f, 0.95f, 0.80f), 0.1f);
+        _lamp      = Mat("LampGlow", new Color(1f, 0.95f, 0.80f), 0.1f);
+        MakeEmissive(_lamp, new Color(1.25f, 1f, 0.65f));
         _woodWall  = Mat("WoodWall", new Color(0.62f, 0.45f, 0.30f), 0.05f);
         _door      = Mat("Door",     new Color(0.35f, 0.22f, 0.12f), 0.05f);
         _windows   = Mat("Windows",  new Color(0.30f, 0.38f, 0.45f), 0.4f);
@@ -405,16 +416,22 @@ public static class MapBuilder
         // кронштейн
         Box("Arm", new Vector3(0, 5.35f, 0.7f), new Vector3(0.12f, 0.12f, 1.4f), _metal, g, false);
         // плафон
-        Box("Lamp", new Vector3(0, 5.25f, 1.35f), new Vector3(0.55f, 0.25f, 0.9f), _light, g, false);
+        Box("Lamp", new Vector3(0, 5.25f, 1.35f), new Vector3(0.55f, 0.25f, 0.9f), _lamp, g, false);
 
-        // тёплое свечение
-        var lt = g.gameObject.AddComponent<Light>();
+        // тёплое свечение — отдельный дочерний объект, чтобы не смещать всю лампу
+        var lightGo = new GameObject("LightSource");
+        lightGo.transform.SetParent(g, false);
+        lightGo.transform.localPosition = new Vector3(0, 5.0f, 1.2f);
+
+        var lt = lightGo.AddComponent<Light>();
         lt.type = LightType.Point;
         lt.range = 14f;
         lt.intensity = 1.6f;
         lt.color = new Color(1f, 0.87f, 0.65f);
-        lt.transform.localPosition = new Vector3(0, 5.0f, 1.2f);
         lt.shadows = LightShadows.None;
+
+        // ореол + случайное мерцание (см. LampGlow.cs)
+        lightGo.AddComponent<LampGlow>();
     }
 
     // ---------- ЗДАНИЕ СУДА ----------
@@ -1285,17 +1302,23 @@ public static class MapBuilder
         {
             Box("Ladder" + i, new Vector3(2.2f, 0.6f + i * 1.1f, 0), new Vector3(0.7f, 0.08f, 0.15f), _metal, g, false);
         }
-        // прожектор
-        Box("Spotlight", new Vector3(0, 12.2f, 2.3f), new Vector3(0.8f, 0.5f, 0.5f), _light, g, false);
-        var pl = g.gameObject.AddComponent<Light>();
+        // прожектор — отдельный дочерний объект, чтобы не смещать/наклонять всю вышку
+        Box("Spotlight", new Vector3(0, 12.2f, 2.3f), new Vector3(0.8f, 0.5f, 0.5f), _lamp, g, false);
+
+        var lightGo = new GameObject("LightSource");
+        lightGo.transform.SetParent(g, false);
+        lightGo.transform.localPosition = new Vector3(0, 11.5f, 1.5f);
+        lightGo.transform.localRotation = Quaternion.Euler(50f, 0, 0);
+
+        var pl = lightGo.AddComponent<Light>();
         pl.type = LightType.Spot;
         pl.range = 60f;
         pl.spotAngle = 70f;
         pl.intensity = 2.2f;
         pl.color = new Color(1f, 0.95f, 0.85f);
-        pl.transform.localPosition = new Vector3(0, 11.5f, 1.5f);
-        pl.transform.localRotation = Quaternion.Euler(50f, 0, 0);
         pl.shadows = LightShadows.None;
+
+        lightGo.AddComponent<LampGlow>();
     }
 
     // забор-стена (вдоль X)
@@ -1378,14 +1401,22 @@ public static class MapBuilder
         var g = Group("Floodlight", root);
         g.localPosition = pos;
         g.localRotation = Quaternion.Euler(0, rotY, 0);
-        Box("Head", new Vector3(0, 0, 0), new Vector3(1.0f, 0.8f, 0.5f), _light, g, false);
-        var l = g.gameObject.AddComponent<Light>();
+        Box("Head", new Vector3(0, 0, 0), new Vector3(1.0f, 0.8f, 0.5f), _lamp, g, false);
+
+        // свет — отдельный дочерний объект, наклоняем только его, а не всю голову
+        var lightGo = new GameObject("LightSource");
+        lightGo.transform.SetParent(g, false);
+        lightGo.transform.localPosition = Vector3.zero;
+        lightGo.transform.localRotation = Quaternion.Euler(35f, 0, 0);
+
+        var l = lightGo.AddComponent<Light>();
         l.type = LightType.Spot;
         l.range = 50f;
         l.spotAngle = 60f;
         l.intensity = 2.0f;
         l.color = new Color(1f, 0.95f, 0.85f);
-        l.transform.localRotation = Quaternion.Euler(35f, 0, 0);
         l.shadows = LightShadows.None;
+
+        lightGo.AddComponent<LampGlow>();
     }
 }
